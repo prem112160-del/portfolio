@@ -1,0 +1,673 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Smart Relay Control</title>
+
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+
+<body>
+<aside class="sidebar">
+<div class="brand">
+<div class="brand-logo">
+<i class="fa-solid fa-bolt"></i>
+</div>
+<div>
+<h2>RelayHub</h2>
+<span>IoT Control System</span>
+</div>
+</div>
+
+<nav class="menu">
+<button class="menu-item active" data-page="dashboard-page">
+<i class="fa-solid fa-house"></i> Dashboard
+</button>
+<button class="menu-item" data-page="relay-control-page">
+<i class="fa-solid fa-toggle-on"></i> Relay Control
+</button>
+<button class="menu-item" data-page="schedules-page">
+<i class="fa-regular fa-calendar"></i> Schedules
+</button>
+<button class="menu-item" data-page="logs-page">
+<i class="fa-solid fa-file-lines"></i> Logs
+</button>
+<button class="menu-item" data-page="alerts-page">
+<i class="fa-regular fa-bell"></i> Alerts
+</button>
+<button class="menu-item" data-page="device-page">
+<i class="fa-solid fa-signal"></i> Device / GSM
+</button>
+<button class="menu-item" data-page="settings-page">
+<i class="fa-solid fa-gear"></i> Settings
+</button>
+<button class="menu-item" data-page="about-page">
+<i class="fa-solid fa-circle-info"></i> About
+</button>
+</nav>
+
+<div class="system-status">
+<h4>SYSTEM STATUS</h4>
+
+<div class="online-status">
+<span id="systemDot"></span>
+<strong id="systemStatus">NOT CONNECTED</strong>
+</div>
+
+<div class="side-info">
+<small>MQTT Broker</small>
+<strong id="sideMqtt">DISCONNECTED</strong>
+</div>
+
+<div class="side-info">
+<small>Device</small>
+<strong id="sideDevice">NOT CONNECTED</strong>
+</div>
+
+<div class="side-info">
+<small>SIM800L</small>
+<strong id="sideSim">NOT CONNECTED</strong>
+</div>
+
+<div class="side-info">
+<small>Last Update</small>
+<strong id="lastUpdate">--</strong>
+</div>
+</div>
+
+<div class="user-box" id="adminUserButton">
+<div class="user-icon">
+<i class="fa-solid fa-user"></i>
+</div>
+<div>
+<strong>Admin User</strong>
+<small>Administrator</small>
+</div>
+<i class="fa-solid fa-chevron-up" id="adminArrow"></i>
+</div>
+
+<div class="admin-menu" id="adminMenu">
+<button data-admin="profile">
+<i class="fa-solid fa-user"></i> Profile
+</button>
+<button data-admin="account">
+<i class="fa-solid fa-gear"></i> Account Settings
+</button>
+<button data-admin="activity">
+<i class="fa-solid fa-clock-rotate-left"></i> Activity
+</button>
+<button id="adminLogout">
+<i class="fa-solid fa-right-from-bracket"></i> Logout
+</button>
+</div>
+</aside>
+
+<main class="main">
+<header class="header">
+<div>
+<h1 id="pageTitle">Smart Relay Dashboard</h1>
+<p id="pageSubtitle">Monitor and control your IoT relay system</p>
+</div>
+
+<div class="header-buttons">
+<div class="header-dropdown">
+<button class="header-btn" id="notificationBtn" type="button">
+<i class="fa-regular fa-bell"></i>
+<span id="notificationBadge">0</span>
+</button>
+
+<div class="notification-panel" id="notificationPanel">
+<div class="dropdown-title">
+<strong>Notifications</strong>
+<button id="clearNotifications" type="button">Clear</button>
+</div>
+<div id="notificationList">
+<div class="empty-notification">No notifications</div>
+</div>
+</div>
+</div>
+
+<button class="header-btn" id="topSettings" type="button" aria-label="Open settings">
+<i class="fa-solid fa-gear"></i>
+</button>
+
+<button class="header-btn theme-btn" id="theme-toggle" type="button" aria-label="Toggle theme">
+🌙
+</button>
+
+<button class="logout-btn" id="topLogout" type="button">
+Logout <i class="fa-solid fa-right-from-bracket"></i>
+</button>
+</div>
+</header>
+
+<section id="dashboard-page" class="app-page">
+<section class="info-bar">
+<div class="info-box">
+<div class="info-icon green">
+<i class="fa-solid fa-server"></i>
+</div>
+<div>
+<small>MQTT</small>
+<strong id="mqttStatus">DISCONNECTED</strong>
+</div>
+</div>
+
+<div class="info-box">
+<div class="info-icon blue">
+<i class="fa-solid fa-microchip"></i>
+</div>
+<div>
+<small>ESP32</small>
+<strong id="deviceStatus">NOT CONNECTED</strong>
+</div>
+</div>
+
+<div class="info-box">
+<div class="info-icon yellow">
+<i class="fa-solid fa-sim-card"></i>
+</div>
+<div>
+<small>SIM800L</small>
+<strong id="simStatus">NOT CONNECTED</strong>
+</div>
+</div>
+
+<div class="info-box">
+<div class="info-icon purple">
+<i class="fa-solid fa-signal"></i>
+</div>
+<div>
+<small>GSM SIGNAL</small>
+<strong id="gsmSignal">NOT AVAILABLE</strong>
+</div>
+</div>
+
+<div class="info-box">
+<div class="info-icon violet">
+<i class="fa-solid fa-clock"></i>
+</div>
+<div>
+<small>TIME</small>
+<strong id="currentTime">--:--:--</strong>
+</div>
+</div>
+</section>
+
+<section class="stats">
+<div class="stat-card purple-card">
+<div class="big-icon purple-icon">
+<i class="fa-solid fa-layer-group"></i>
+</div>
+<small>Total Relays</small>
+<h2>4</h2>
+<span>Available channels</span>
+</div>
+
+<div class="stat-card green-card">
+<div class="big-icon green-icon">
+<i class="fa-solid fa-circle-check"></i>
+</div>
+<small>Active Relays</small>
+<h2 id="activeRelays">--</h2>
+<span id="activePercentage">Waiting for device</span>
+</div>
+
+<div class="stat-card blue-card">
+<div class="big-icon blue-icon">
+<i class="fa-solid fa-signal"></i>
+</div>
+<small>GSM Signal</small>
+<h2 id="gsmCard">--</h2>
+<span>SIM800L</span>
+</div>
+
+<div class="stat-card violet-card">
+<div class="big-icon violet-icon">
+<i class="fa-solid fa-terminal"></i>
+</div>
+<small>Commands</small>
+<h2 id="commandCard">0</h2>
+<span>This session</span>
+</div>
+</section>
+
+<section class="main-grid">
+<div class="panel relay-panel">
+<div class="panel-title">
+<div>
+<h2>Relay Status</h2>
+<p>Actual hardware feedback</p>
+</div>
+</div>
+
+<div class="relay">
+<div class="relay-color green-relay">
+<i class="fa-solid fa-bolt"></i>
+</div>
+<div class="relay-name">
+<strong>Relay 1</strong>
+<small>Channel 1</small>
+</div>
+<div id="status1" class="relay-status unknown">
+<span></span> UNKNOWN
+</div>
+<label class="switch">
+<input type="checkbox" id="relay1-toggle" disabled>
+<span class="slider"></span>
+</label>
+</div>
+
+<div class="relay">
+<div class="relay-color red-relay">
+<i class="fa-solid fa-bolt"></i>
+</div>
+<div class="relay-name">
+<strong>Relay 2</strong>
+<small>Channel 2</small>
+</div>
+<div id="status2" class="relay-status unknown">
+<span></span> UNKNOWN
+</div>
+<label class="switch">
+<input type="checkbox" id="relay2-toggle" disabled>
+<span class="slider"></span>
+</label>
+</div>
+
+<div class="relay">
+<div class="relay-color blue-relay">
+<i class="fa-solid fa-bolt"></i>
+</div>
+<div class="relay-name">
+<strong>Relay 3</strong>
+<small>Channel 3</small>
+</div>
+<div id="status3" class="relay-status unknown">
+<span></span> UNKNOWN
+</div>
+<label class="switch">
+<input type="checkbox" id="relay3-toggle" disabled>
+<span class="slider"></span>
+</label>
+</div>
+
+<div class="relay">
+<div class="relay-color violet-relay">
+<i class="fa-solid fa-bolt"></i>
+</div>
+<div class="relay-name">
+<strong>Relay 4</strong>
+<small>Channel 4</small>
+</div>
+<div id="status4" class="relay-status unknown">
+<span></span> UNKNOWN
+</div>
+<label class="switch">
+<input type="checkbox" id="relay4-toggle" disabled>
+<span class="slider"></span>
+</label>
+</div>
+
+<div class="quick-title">Quick Actions</div>
+<div class="quick-actions">
+<button id="allOnBtn" class="action green-action" type="button" disabled>
+<i class="fa-solid fa-power-off"></i> ALL ON
+</button>
+<button id="allOffBtn" class="action red-action" type="button" disabled>
+<i class="fa-solid fa-power-off"></i> ALL OFF
+</button>
+</div>
+</div>
+
+<div class="panel activity-panel">
+<div class="panel-title">
+<div>
+<h2>Recent Activity</h2>
+<p>Latest system events</p>
+</div>
+</div>
+
+<div id="activityList" class="activity-list">
+<div class="no-activity">No activity yet</div>
+</div>
+
+<button class="view-logs" id="viewLogs" type="button">View All Logs</button>
+</div>
+</section>
+</section>
+
+<section id="relay-control-page" class="app-page" style="display:none;">
+<div class="page-header">
+<h1>Relay Control</h1>
+<p>Control relays through MQTT</p>
+</div>
+
+<div class="control-grid">
+<div class="control-card">
+<div class="control-icon green-relay"><i class="fa-solid fa-bolt"></i></div>
+<div><h2>Relay 1</h2><p id="control-status1">UNKNOWN</p></div>
+<label class="switch">
+<input type="checkbox" id="control-relay1" disabled>
+<span class="slider"></span>
+</label>
+</div>
+
+<div class="control-card">
+<div class="control-icon red-relay"><i class="fa-solid fa-bolt"></i></div>
+<div><h2>Relay 2</h2><p id="control-status2">UNKNOWN</p></div>
+<label class="switch">
+<input type="checkbox" id="control-relay2" disabled>
+<span class="slider"></span>
+</label>
+</div>
+
+<div class="control-card">
+<div class="control-icon blue-relay"><i class="fa-solid fa-bolt"></i></div>
+<div><h2>Relay 3</h2><p id="control-status3">UNKNOWN</p></div>
+<label class="switch">
+<input type="checkbox" id="control-relay3" disabled>
+<span class="slider"></span>
+</label>
+</div>
+
+<div class="control-card">
+<div class="control-icon violet-relay"><i class="fa-solid fa-bolt"></i></div>
+<div><h2>Relay 4</h2><p id="control-status4">UNKNOWN</p></div>
+<label class="switch">
+<input type="checkbox" id="control-relay4" disabled>
+<span class="slider"></span>
+</label>
+</div>
+</div>
+</section>
+
+<section id="schedules-page" class="app-page" style="display:none;">
+<div class="page-header">
+<h1>Relay Schedules</h1>
+<p>Create automatic relay commands</p>
+</div>
+
+<div class="schedule-toolbar">
+<button class="page-button" id="addScheduleBtn" type="button">
+<i class="fa-solid fa-plus"></i> Add Schedule
+</button>
+</div>
+
+<div id="scheduleList" class="schedule-list">
+<div class="empty-page small-empty">
+<i class="fa-regular fa-calendar"></i>
+<h2>No schedules</h2>
+<p>Create your first automatic relay schedule.</p>
+</div>
+</div>
+
+<div class="modal" id="scheduleModal">
+<div class="modal-box">
+<div class="modal-title">
+<h2>Add Schedule</h2>
+<button id="closeSchedule" type="button" aria-label="Close schedule form">×</button>
+</div>
+
+<label for="scheduleRelay">Relay</label>
+<select id="scheduleRelay">
+<option value="1">Relay 1</option>
+<option value="2">Relay 2</option>
+<option value="3">Relay 3</option>
+<option value="4">Relay 4</option>
+</select>
+
+<label for="scheduleAction">Action</label>
+<select id="scheduleAction">
+<option value="ON">ON</option>
+<option value="OFF">OFF</option>
+</select>
+
+<label for="scheduleDate">Date</label>
+<input type="date" id="scheduleDate">
+
+<label for="scheduleTime">Time</label>
+<input type="time" id="scheduleTime">
+
+<label for="scheduleRepeat">Repeat</label>
+<select id="scheduleRepeat">
+<option value="once">Once</option>
+<option value="daily">Daily</option>
+<option value="weekly">Weekly</option>
+</select>
+
+<div class="modal-actions">
+<button class="cancel-btn" id="cancelSchedule" type="button">Cancel</button>
+<button class="page-button" id="saveSchedule" type="button">Save Schedule</button>
+</div>
+</div>
+</div>
+</section>
+
+<section id="logs-page" class="app-page" style="display:none;">
+<div class="page-header">
+<h1>System Logs</h1>
+<p>Complete command and device history</p>
+</div>
+<div class="log-toolbar">
+<button class="page-button" id="clearLogs" type="button">
+<i class="fa-solid fa-trash"></i> Clear Logs
+</button>
+</div>
+<div id="fullLogs" class="full-logs">
+<p>No logs available.</p>
+</div>
+</section>
+
+<section id="alerts-page" class="app-page" style="display:none;">
+<div class="page-header">
+<h1>System Alerts</h1>
+<p>Connection and hardware warnings</p>
+</div>
+<div id="fullAlerts" class="alerts-container">
+<div class="empty-page small-empty">
+<i class="fa-regular fa-circle-check"></i>
+<h2>No Alerts</h2>
+<p>No system problems detected yet.</p>
+</div>
+</div>
+</section>
+
+<section id="device-page" class="app-page" style="display:none;">
+<div class="page-header">
+<h1>Device &amp; GSM</h1>
+<p>Live ESP32 and SIM800L information</p>
+</div>
+
+<div class="device-grid">
+<div class="device-card">
+<div class="device-card-icon blue-relay"><i class="fa-solid fa-microchip"></i></div>
+<h2>ESP32</h2>
+<strong id="devicePageStatus">NOT CONNECTED</strong>
+<span>Heartbeat monitoring</span>
+</div>
+
+<div class="device-card">
+<div class="device-card-icon yellow-relay"><i class="fa-solid fa-sim-card"></i></div>
+<h2>SIM800L</h2>
+<strong id="simPageStatus">NOT CONNECTED</strong>
+<span>GSM module status</span>
+</div>
+
+<div class="device-card">
+<div class="device-card-icon green-relay"><i class="fa-solid fa-signal"></i></div>
+<h2>GSM Signal</h2>
+<strong id="gsmPageSignal">NOT AVAILABLE</strong>
+<span>Actual SIM800L reading</span>
+</div>
+
+<div class="device-card">
+<div class="device-card-icon violet-relay"><i class="fa-solid fa-server"></i></div>
+<h2>MQTT</h2>
+<strong id="mqttPageStatus">DISCONNECTED</strong>
+<span>Mosquitto connection</span>
+</div>
+</div>
+</section>
+
+<section id="settings-page" class="app-page" style="display:none;">
+<div class="page-header">
+<h1>Settings</h1>
+<p>Configure dashboard settings</p>
+</div>
+
+<div class="settings-card">
+<h2>MQTT Configuration</h2>
+
+<label for="mqttServerInput">MQTT WebSocket Server</label>
+<input type="text" id="mqttServerInput" value="ws://localhost:9001">
+
+<label for="deviceIdInput">Device ID</label>
+<input type="text" id="deviceIdInput" value="ESP32-RELAY-01">
+
+<label for="relayCountInput">Relay Count</label>
+<input type="text" id="relayCountInput" value="4" disabled>
+
+<label for="communicationModule">Communication Module</label>
+<select id="communicationModule">
+<option value="SIM800L">SIM800L</option>
+</select>
+
+<button class="page-button" id="saveSettings" type="button">Save Settings</button>
+</div>
+</section>
+
+<section id="about-page" class="app-page" style="display:none;">
+<div class="about-hero">
+<div class="about-logo"><i class="fa-solid fa-bolt"></i></div>
+<div>
+<h1>Smart Relay Control System</h1>
+<p>Remote IoT relay monitoring and control using ESP32, SIM800L and MQTT.</p>
+</div>
+</div>
+
+<div class="about-stats">
+<div><strong>4</strong><span>Relay Channels</span></div>
+<div><strong>ESP32</strong><span>Controller</span></div>
+<div><strong>SIM800L</strong><span>GSM Communication</span></div>
+<div><strong>MQTT</strong><span>Messaging Protocol</span></div>
+</div>
+
+<div class="about-grid">
+<div class="about-card">
+<i class="fa-solid fa-bullseye"></i>
+<h2>Project Objective</h2>
+<p>Provide remote control and monitoring of electrical relay channels through an IoT communication system.</p>
+</div>
+
+<div class="about-card">
+<i class="fa-solid fa-star"></i>
+<h2>Key Features</h2>
+<ul>
+<li>Remote relay control</li>
+<li>MQTT communication</li>
+<li>GSM connectivity</li>
+<li>Hardware status feedback</li>
+<li>Command logging</li>
+<li>Automatic scheduling</li>
+</ul>
+</div>
+
+<div class="about-card">
+<i class="fa-solid fa-microchip"></i>
+<h2>Hardware</h2>
+<ul>
+<li>ESP32-WROOM</li>
+<li>SIM800L GSM module</li>
+<li>4-channel relay</li>
+<li>External relay supply</li>
+<li>Feedback circuitry</li>
+</ul>
+</div>
+
+<div class="about-card">
+<i class="fa-solid fa-diagram-project"></i>
+<h2>Communication</h2>
+<div class="flow">
+<span>Dashboard</span>
+<i class="fa-solid fa-arrow-right"></i>
+<span>MQTT</span>
+<i class="fa-solid fa-arrow-right"></i>
+<span>SIM800L</span>
+<i class="fa-solid fa-arrow-right"></i>
+<span>ESP32</span>
+<i class="fa-solid fa-arrow-right"></i>
+<span>Relay</span>
+</div>
+</div>
+</div>
+
+<div class="future-box">
+<i class="fa-solid fa-rocket"></i>
+<div>
+<h2>Future Expansion</h2>
+<p>Energy monitoring, additional devices, advanced scheduling, alerts and expanded industrial monitoring.</p>
+</div>
+</div>
+</section>
+
+<footer>
+<span>© 2026 Smart Relay Control</span>
+<span>ESP32 • SIM800L • MQTT • Mosquitto</span>
+</footer>
+</main>
+
+<div class="modal" id="logoutModal">
+<div class="modal-box logout-box">
+<div class="logout-icon">
+<i class="fa-solid fa-right-from-bracket"></i>
+</div>
+<h2>Logout?</h2>
+<p>Are you sure you want to logout?</p>
+<div class="modal-actions">
+<button class="cancel-btn" id="cancelLogout" type="button">Cancel</button>
+<button class="logout-confirm" id="confirmLogout" type="button">Logout</button>
+</div>
+</div>
+</div>
+
+<div id="loginScreen">
+<div class="login-card">
+<div class="login-icon">🔐</div>
+<h1>Smart Relay</h1>
+<p class="login-subtitle">Secure Access Portal</p>
+
+<form id="loginForm">
+<label for="username">Username</label>
+<input
+type="text"
+id="username"
+placeholder="Enter username"
+autocomplete="username"
+required
+>
+
+<label for="password">Password</label>
+<input
+type="password"
+id="password"
+placeholder="Enter password"
+autocomplete="current-password"
+required
+>
+
+<p id="loginError" role="alert"></p>
+<button type="submit" id="loginButton">Verify &amp; Login</button>
+</form>
+
+<p class="login-footer">IoT Relay Control System</p>
+</div>
+</div>
+
+<script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
+<script src="script.js"></script>
+</body>
+</html>
