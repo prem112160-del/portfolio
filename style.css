@@ -2154,3 +2154,129 @@ textarea {
         --font-small: 12px;
     }
 }
+
+/* ===== Dashboard readability improvements ===== */
+
+/* Main page title */
+.topbar h1,
+.page-title {
+    font-size: 32px;
+    line-height: 1.3;
+}
+
+/* Subtitle and section descriptions */
+.topbar p,
+.page-subtitle {
+    font-size: 17px;
+    line-height: 1.5;
+}
+
+/* Top system status bar */
+.system-status,
+.system-status span,
+.system-status strong,
+.status-bar,
+.status-bar span,
+.status-bar strong {
+    font-size: 14px;
+}
+
+/* Dashboard statistic cards */
+.card h2,
+.stat-card h2,
+.stat-value {
+    font-size: 30px;
+}
+
+.card p,
+.stat-card p,
+.stat-label {
+    font-size: 15px;
+}
+
+/* Relay section and activity section headings */
+.card h3,
+.relay-section h2,
+.activity-section h2 {
+    font-size: 25px;
+}
+
+/* Relay names, channel labels, and relay status */
+.relay-card strong,
+.relay-card span,
+.relay-status,
+.relay-info,
+.activity-item,
+.activity-info {
+    font-size: 15px;
+}
+
+/* Sidebar navigation */
+.sidebar .menu-item {
+    font-size: 18px;
+}
+
+/* Sidebar system information */
+.sidebar .system-status,
+.sidebar .system-status strong,
+.sidebar .system-status span {
+    font-size: 14px;
+}
+
+/* General dashboard text */
+body {
+    font-size: 16px;
+}
+
+/* Keep buttons readable */
+button {
+    font-size: 15px;
+}
+
+/* Increase existing dashboard text sizes only */
+body {
+    font-size: 18px !important;
+}
+
+h1 {
+    font-size: 36px !important;
+}
+
+h2 {
+    font-size: 30px !important;
+}
+
+h3 {
+    font-size: 24px !important;
+}
+
+p,
+span,
+label,
+small,
+.menu-item,
+button,
+strong {
+    font-size: 18px !important;
+}
+
+/* Consistent sidebar text size and thickness */
+.sidebar .menu-item,
+.sidebar .system-status,
+.sidebar .system-status strong,
+.sidebar .system-status span {
+    font-size: 18px !important;
+    font-weight: 500 !important;
+}
+
+/* Keep status values slightly emphasized */
+.sidebar .system-status strong {
+    font-weight: 600 !important;
+}
+
+/* Reduce the main dashboard title by one step */
+.topbar h1 {
+    font-size: 32px !important;
+    font-weight: 500 !important;
+}
+
