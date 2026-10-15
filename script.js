@@ -1,15 +1,52 @@
-
 /* =========================================================
    SMART RELAY DASHBOARD
    ESP32 + SIM800L + MQTT
    ========================================================= */
 
+// Migrate an old saved localhost broker to the actual EMQX endpoint.
+
 /* ---------------- MQTT CONFIGURATION ---------------- */
 
-const DEFAULT_MQTT_BROKER = "ws://localhost:9001";
+const DEFAULT_MQTT_BROKER =
+    "wss://n1fcf71d.ala.asia-southeast1.emqxsl.com:8084/mqtt";
 
-let MQTT_BROKER =
-    localStorage.getItem("mqttServer") || DEFAULT_MQTT_BROKER;
+let MQTT_BROKER = (() => {
+    let savedBroker = "";
+
+    try {
+        savedBroker = (
+            localStorage.getItem("mqttServer") || ""
+        ).trim();
+    } catch (error) {
+        console.warn("Could not read saved MQTT broker:", error);
+    }
+
+    if (
+        !savedBroker ||
+        /^wss?:\/\/localhost(?::|\/|$)/i.test(savedBroker) ||
+        /^wss?:\/\/127\.0\.0\.1(?::|\/|$)/i.test(savedBroker)
+    ) {
+        try {
+            localStorage.setItem(
+                "mqttServer",
+                DEFAULT_MQTT_BROKER
+            );
+        } catch (error) {
+            console.warn("Could not save MQTT broker:", error);
+        }
+
+        return DEFAULT_MQTT_BROKER;
+    }
+
+    return savedBroker;
+})();
+
+function getMQTTCredentials() {
+    return {
+        username: "the_beyonders",
+        password: "12345678"
+    };
+}
 
 let client = null;
 let reconnectTimer = null;
@@ -27,7 +64,7 @@ const TOPICS = {
 
 /* ---------------- SYSTEM STATE ---------------- */
 
-// null means the hardware state is not yet confirmed.
+// null means hardware state has not yet been confirmed.
 const relayState = {
     1: null,
     2: null,
@@ -122,7 +159,9 @@ const pageTitles = {
 
 function connectMQTT() {
     if (typeof mqtt === "undefined") {
-        console.error("MQTT.js is missing. Check the MQTT.js script in index.html.");
+        console.error(
+            "MQTT.js is missing. Check the MQTT.js script in index.html."
+        );
         setMQTTStatus(false, "MQTT.js not loaded");
         return;
     }
@@ -141,11 +180,24 @@ function connectMQTT() {
     setMQTTStatus(false, "Connecting...");
 
     try {
-        client = mqtt.connect(MQTT_BROKER, {
+        const credentials = getMQTTCredentials();
+
+        const mqttOptions = {
             reconnectPeriod: 3000,
             connectTimeout: 10000,
-            clean: true
-        });
+            clean: true,
+            keepalive: 30
+        };
+
+        if (credentials.username) {
+            mqttOptions.username = credentials.username;
+        }
+
+        if (credentials.password) {
+            mqttOptions.password = credentials.password;
+        }
+
+        client = mqtt.connect(MQTT_BROKER, mqttOptions);
     } catch (error) {
         console.error("Unable to start MQTT connection:", error);
         setMQTTStatus(false, "Connection error");
@@ -155,7 +207,7 @@ function connectMQTT() {
     client.on("connect", () => {
         console.log("MQTT connected:", MQTT_BROKER);
 
-        setMQTTStatus(true, "Connected to Mosquitto");
+        setMQTTStatus(true, "Connected to EMQX");
         enableControls();
 
         const topics = [
@@ -171,9 +223,20 @@ function connectMQTT() {
         client.subscribe(topics, error => {
             if (error) {
                 console.error("MQTT subscription failed:", error);
-                addLog("MQTT", "SUBSCRIBE ERROR", error.message, "FAIL");
+
+                addLog(
+                    "MQTT",
+                    "SUBSCRIBE ERROR",
+                    error.message,
+                    "FAIL"
+                );
             } else {
-                addLog("MQTT", "CONNECTED", "Broker connected and status topics subscribed", "SUCCESS");
+                addLog(
+                    "MQTT",
+                    "CONNECTED",
+                    "Broker connected and status topics subscribed",
+                    "SUCCESS"
+                );
             }
         });
 
@@ -192,6 +255,8 @@ function connectMQTT() {
         setMQTTStatus(false, "Broker offline");
         disableControls();
 
+        clearPendingCommandsOnDisconnect();
+
         addLog(
             "MQTT",
             "DISCONNECTED",
@@ -203,6 +268,8 @@ function connectMQTT() {
     client.on("close", () => {
         setMQTTStatus(false, "Disconnected");
         disableControls();
+
+        clearPendingCommandsOnDisconnect();
     });
 
     client.on("error", error => {
@@ -261,7 +328,10 @@ function processRelayStatus(number, message) {
     const value = message.toUpperCase();
 
     if (value !== "ON" && value !== "OFF") {
-        console.warn(`Invalid status for relay ${number}:`, message);
+        console.warn(
+            `Invalid status for relay ${number}:`,
+            message
+        );
         return;
     }
 
@@ -270,7 +340,7 @@ function processRelayStatus(number, message) {
 
     relayState[number] = isOn;
 
-    // A hardware status message confirms the command result.
+    // Hardware feedback, not a button click, confirms relay state.
     const pending = pendingCommands[number];
 
     if (pending) {
@@ -290,6 +360,7 @@ function processRelayStatus(number, message) {
             );
         }
 
+        clearTimeout(pending.timeoutId);
         delete pendingCommands[number];
     } else if (previousState !== isOn) {
         addLog(
@@ -305,6 +376,8 @@ function processRelayStatus(number, message) {
     updateLastUpdate();
 }
 
+/* ---------------- RELAY UI ---------------- */
+
 function updateRelayUI(number, isOn) {
     const status = get(`status${number}`);
     const mainToggle = get(`relay${number}-toggle`);
@@ -317,16 +390,17 @@ function updateRelayUI(number, isOn) {
         if (pending) {
             status.className = "relay-status unknown";
             status.innerHTML =
-                `<span></span> WAITING FOR CONFIRMATION`;
+                "<span></span> WAITING FOR CONFIRMATION";
         } else {
-            status.className = `relay-status ${isOn ? "on" : "off"}`;
+            status.className =
+                `relay-status ${isOn ? "on" : "off"}`;
+
             status.innerHTML =
                 `<span></span> ${isOn ? "ON" : "OFF"}`;
         }
     }
 
-    // Keep both dashboard switches in sync with the latest
-    // hardware-confirmed state, unless a command is pending.
+    // Synchronize the two views using confirmed hardware state.
     if (!pending) {
         if (mainToggle) mainToggle.checked = isOn;
         if (controlToggle) controlToggle.checked = isOn;
@@ -342,11 +416,16 @@ function updateRelayUI(number, isOn) {
             : (isOn ? "#16a34a" : "#dc2626");
     }
 }
+/* ---------------- UNKNOWN RELAY STATES ---------------- */
 
 function setRelaysUnknown() {
     for (let i = 1; i <= RELAY_COUNT; i++) {
         relayState[i] = null;
-        delete pendingCommands[i];
+
+        if (pendingCommands[i]) {
+            clearTimeout(pendingCommands[i].timeoutId);
+            delete pendingCommands[i];
+        }
 
         const status = get(`status${i}`);
         const mainToggle = get(`relay${i}-toggle`);
@@ -373,7 +452,11 @@ function setRelaysUnknown() {
 /* ---------------- RELAY COMMANDS ---------------- */
 
 function sendRelayCommand(number, requestedState) {
-    if (!Number.isInteger(number) || number < 1 || number > RELAY_COUNT) {
+    if (
+        !Number.isInteger(number) ||
+        number < 1 ||
+        number > RELAY_COUNT
+    ) {
         console.error("Invalid relay number:", number);
         return;
     }
@@ -388,18 +471,50 @@ function sendRelayCommand(number, requestedState) {
     const command = state ? "ON" : "OFF";
     const topic = TOPICS.relaySet(number);
 
-    pendingCommands[number] = {
+    // Cancel the previous timeout if another command is issued.
+    if (pendingCommands[number]) {
+        clearTimeout(pendingCommands[number].timeoutId);
+    }
+
+    const pending = {
         state,
-        sentAt: Date.now()
+        sentAt: Date.now(),
+        timeoutId: null
     };
+
+    pendingCommands[number] = pending;
 
     updatePendingUI(number);
 
-    client.publish(topic, command, { qos: 1 }, error => {
-        if (error) {
-            console.error("Publish failed:", error);
+    pending.timeoutId = setTimeout(() => {
+        if (pendingCommands[number] !== pending) return;
 
+        delete pendingCommands[number];
+
+        restoreRelaySwitch(number);
+
+        addLog(
+            `Relay ${number}`,
+            "CONFIRMATION TIMEOUT",
+            "No matching relay status was received. The physical state is not confirmed.",
+            "FAIL"
+        );
+
+        addNotification(
+            `Relay ${number} Unconfirmed`,
+            "No hardware confirmation received. Check the device and MQTT topics.",
+            "danger"
+        );
+    }, 10000);
+
+    client.publish(topic, command, { qos: 1 }, error => {
+        // Ignore callbacks for a command superseded by a newer command.
+        if (pendingCommands[number] !== pending) return;
+
+        if (error) {
+            clearTimeout(pending.timeoutId);
             delete pendingCommands[number];
+
             restoreRelaySwitch(number);
 
             addLog(
@@ -438,16 +553,25 @@ function sendRelayCommand(number, requestedState) {
     });
 }
 
-
 function updatePendingUI(number) {
     const status = get(`status${number}`);
+    const controlStatus = get(`control-status${number}`);
+    const pending = pendingCommands[number];
 
-    // Do not show PENDING ON/OFF in the relay card.
-    // Keep the displayed state based on hardware feedback.
-    if (status && relayState[number] === null) {
+    if (status && pending) {
         status.className = "relay-status unknown";
-        status.innerHTML = "<span></span> UNKNOWN";
+        status.innerHTML =
+            "<span></span> WAITING FOR CONFIRMATION";
     }
+
+    if (controlStatus && pending) {
+        controlStatus.textContent =
+            `PENDING ${pending.state ? "ON" : "OFF"}`;
+
+        controlStatus.style.color = "#d97706";
+    }
+
+    // Do not mark a relay ON/OFF before hardware feedback arrives.
 }
 
 function restoreRelaySwitch(number) {
@@ -459,10 +583,24 @@ function restoreRelaySwitch(number) {
     if (currentState !== null) {
         if (mainToggle) mainToggle.checked = currentState;
         if (controlToggle) controlToggle.checked = currentState;
+
         updateRelayUI(number, currentState);
     } else {
         if (mainToggle) mainToggle.checked = false;
         if (controlToggle) controlToggle.checked = false;
+
+        const status = get(`status${number}`);
+        const controlStatus = get(`control-status${number}`);
+
+        if (status) {
+            status.className = "relay-status unknown";
+            status.innerHTML = "<span></span> UNKNOWN";
+        }
+
+        if (controlStatus) {
+            controlStatus.textContent = "UNKNOWN";
+            controlStatus.style.color = "#9ca3af";
+        }
     }
 }
 
@@ -499,6 +637,17 @@ function enableControls() {
 
 function disableControls() {
     enableControls();
+}
+
+function clearPendingCommandsOnDisconnect() {
+    for (let i = 1; i <= RELAY_COUNT; i++) {
+        if (pendingCommands[i]) {
+            clearTimeout(pendingCommands[i].timeoutId);
+            delete pendingCommands[i];
+
+            restoreRelaySwitch(i);
+        }
+    }
 }
 
 /* ---------------- RELAY SWITCH EVENTS ---------------- */
@@ -543,9 +692,17 @@ function processDeviceStatus(message) {
                 "good"
             );
 
-            addLog("ESP32", "ONLINE", "Device status received.", "SUCCESS");
+            addLog(
+                "ESP32",
+                "ONLINE",
+                "Device status received.",
+                "SUCCESS"
+            );
         }
-    } else if (value === "OFFLINE" || value === "DISCONNECTED") {
+    } else if (
+        value === "OFFLINE" ||
+        value === "DISCONNECTED"
+    ) {
         deviceConnected = false;
         lastDeviceHeartbeat = 0;
 
@@ -558,20 +715,46 @@ function processDeviceStatus(message) {
             "danger"
         );
 
-        addLog("ESP32", "OFFLINE", "Device reported offline.", "FAIL");
+        addLog(
+            "ESP32",
+            "OFFLINE",
+            "Device reported offline.",
+            "FAIL"
+        );
+    } else {
+        console.warn("Unknown ESP32 status payload:", message);
+        return;
     }
 
     updateLastUpdate();
 }
 
 function updateDeviceUI(connected) {
-    setText("deviceStatus", connected ? "CONNECTED" : "NOT CONNECTED");
-    setText("sideDevice", connected ? "CONNECTED" : "NOT CONNECTED");
-    setText("devicePageStatus", connected ? "CONNECTED" : "NOT CONNECTED");
-    setText("systemStatus", connected ? "SYSTEM ONLINE" : "NOT CONNECTED");
+    setText(
+        "deviceStatus",
+        connected ? "CONNECTED" : "NOT CONNECTED"
+    );
+
+    setText(
+        "sideDevice",
+        connected ? "CONNECTED" : "NOT CONNECTED"
+    );
+
+    setText(
+        "devicePageStatus",
+        connected ? "CONNECTED" : "NOT CONNECTED"
+    );
+
+    setText(
+        "systemStatus",
+        connected ? "SYSTEM ONLINE" : "NOT CONNECTED"
+    );
 
     const dot = get("systemDot");
-    if (dot) dot.classList.toggle("online", connected);
+
+    if (dot) {
+        dot.classList.toggle("online", connected);
+    }
 }
 
 function checkDeviceHeartbeat() {
@@ -600,29 +783,7 @@ function checkDeviceHeartbeat() {
         );
     }
 
-    // Commands are not hardware confirmations. If no status arrives,
-    // show that the command is still awaiting confirmation.
-    for (let i = 1; i <= RELAY_COUNT; i++) {
-        const pending = pendingCommands[i];
-
-        if (pending && Date.now() - pending.sentAt > 10000) {
-            delete pendingCommands[i];
-            restoreRelaySwitch(i);
-
-            addLog(
-                `Relay ${i}`,
-                "CONFIRMATION TIMEOUT",
-                "No matching relay status was received. Check the device and MQTT topics.",
-                "FAIL"
-            );
-
-            addNotification(
-                `Relay ${i} Unconfirmed`,
-                "No hardware status confirmation received.",
-                "danger"
-            );
-        }
-    }
+    // Confirmation timeouts are handled by each command's own timer.
 }
 
 setInterval(checkDeviceHeartbeat, 3000);
@@ -634,9 +795,12 @@ function processSIMStatus(message) {
 
     if (["ONLINE", "CONNECTED", "READY"].includes(value)) {
         simConnected = true;
-    } else if (["OFFLINE", "DISCONNECTED", "ERROR"].includes(value)) {
+    } else if (
+        ["OFFLINE", "DISCONNECTED", "ERROR"].includes(value)
+    ) {
         simConnected = false;
     } else {
+        console.warn("Unknown SIM800L status payload:", message);
         return;
     }
 
@@ -645,11 +809,13 @@ function processSIMStatus(message) {
 }
 
 function updateSIMUI() {
-    const value = simConnected ? "CONNECTED" : "NOT CONNECTED";
+    const status = simConnected
+        ? "CONNECTED"
+        : "NOT CONNECTED";
 
-    setText("simStatus", value);
-    setText("sideSim", value);
-    setText("simPageStatus", value);
+    setText("simStatus", status);
+    setText("sideSim", status);
+    setText("simPageStatus", status);
 }
 
 /* ---------------- GSM SIGNAL STATUS ---------------- */
@@ -659,38 +825,35 @@ function processGSMStatus(message) {
 
     if (!value) return;
 
-    gsmAvailable = true;
     lastGSMMessage = Date.now();
 
-    let csq = null;
-    let signal = value;
+    const numericValue = Number(value);
 
-    if (/^\d+$/.test(value)) {
-        csq = Number.parseInt(value, 10);
-        signal = convertCSQ(csq);
-    } else if (value.includes(",")) {
-        const parts = value.split(",");
-        const parsed = Number.parseInt(parts[0], 10);
+    if (Number.isFinite(numericValue)) {
+        gsmAvailable = true;
 
-        if (!Number.isNaN(parsed)) {
-            csq = parsed;
-            signal = parts.slice(1).join(",").trim() || convertCSQ(csq);
-        }
+        setText("gsmSignal", `${numericValue}`);
+        setText("gsmCard", `${numericValue}`);
+        setText("gsmPageSignal", `${numericValue}`);
+    } else {
+        gsmAvailable = true;
+
+        setText("gsmSignal", value);
+        setText("gsmCard", value);
+        setText("gsmPageSignal", value);
     }
-
-    setText("gsmSignal", signal);
-    setText("gsmCard", csq !== null ? String(csq) : signal);
-    setText(
-        "gsmPageSignal",
-        csq !== null ? `${csq} CSQ - ${signal}` : signal
-    );
-    setText("gsmValue", "SIM800L");
 
     updateLastUpdate();
 }
+/* ---------------- GSM SIGNAL CONVERSION ---------------- */
 
 function convertCSQ(csq) {
-    if (csq === 99 || Number.isNaN(csq) || csq < 0 || csq > 31) {
+    if (
+        csq === 99 ||
+        Number.isNaN(csq) ||
+        csq < 0 ||
+        csq > 31
+    ) {
         return "NOT AVAILABLE";
     }
 
@@ -731,6 +894,7 @@ function updateActiveCount() {
 document.querySelectorAll(".menu-item").forEach(button => {
     button.addEventListener("click", () => {
         const page = button.dataset.page;
+
         openPage(page);
         setActiveMenu(page);
     });
@@ -753,7 +917,10 @@ function openPage(page) {
 
 function setActiveMenu(page) {
     document.querySelectorAll(".menu-item").forEach(item => {
-        item.classList.toggle("active", item.dataset.page === page);
+        item.classList.toggle(
+            "active",
+            item.dataset.page === page
+        );
     });
 }
 
@@ -808,6 +975,7 @@ function addLog(source, event, details, result = "INFO") {
     };
 
     logs.unshift(entry);
+
     if (logs.length > 200) logs.pop();
 
     renderLogs();
@@ -843,9 +1011,13 @@ function renderLogs() {
 
 try {
     const savedLogs = localStorage.getItem("relayLogs");
+
     if (savedLogs) {
         const parsed = JSON.parse(savedLogs);
-        if (Array.isArray(parsed)) logs = parsed;
+
+        if (Array.isArray(parsed)) {
+            logs = parsed;
+        }
     }
 } catch (error) {
     console.warn("Could not load saved logs:", error);
@@ -873,7 +1045,9 @@ function addNotification(title, message, type = "info") {
         time: new Date().toLocaleTimeString()
     });
 
-    if (notifications.length > 20) notifications.pop();
+    if (notifications.length > 20) {
+        notifications.pop();
+    }
 
     renderNotifications();
 }
@@ -908,12 +1082,18 @@ safeOn("notificationBtn", "click", event => {
     event.stopPropagation();
 
     const panel = get("notificationPanel");
-    if (panel) panel.classList.toggle("show");
+
+    if (panel) {
+        panel.classList.toggle("show");
+    }
 });
 
 document.addEventListener("click", () => {
     const panel = get("notificationPanel");
-    if (panel) panel.classList.remove("show");
+
+    if (panel) {
+        panel.classList.remove("show");
+    }
 });
 
 safeOn("notificationPanel", "click", event => {
@@ -929,10 +1109,15 @@ safeOn("clearNotifications", "click", () => {
 
 safeOn("adminUserButton", "click", () => {
     const menu = get("adminMenu");
-    if (menu) menu.classList.toggle("show");
+
+    if (menu) {
+        menu.classList.toggle("show");
+    }
 });
 
-document.querySelectorAll(".admin-menu button[data-admin]").forEach(button => {
+document.querySelectorAll(
+    ".admin-menu button[data-admin]"
+).forEach(button => {
     button.addEventListener("click", () => {
         const type = button.dataset.admin;
 
@@ -947,129 +1132,98 @@ document.querySelectorAll(".admin-menu button[data-admin]").forEach(button => {
         }
 
         const menu = get("adminMenu");
-        if (menu) menu.classList.remove("show");
+
+        if (menu) {
+            menu.classList.remove("show");
+        }
     });
 });
 
 safeOn("topLogout", "click", () => {
     const modal = get("logoutModal");
-    if (modal) modal.classList.add("show");
+
+    if (modal) {
+        modal.classList.add("show");
+    }
 });
 
 safeOn("adminLogout", "click", () => {
     const menu = get("adminMenu");
-    if (menu) menu.classList.remove("show");
+
+    if (menu) {
+        menu.classList.remove("show");
+    }
 
     const modal = get("logoutModal");
-    if (modal) modal.classList.add("show");
+
+    if (modal) {
+        modal.classList.add("show");
+    }
 });
 
 safeOn("cancelLogout", "click", () => {
     const modal = get("logoutModal");
-    if (modal) modal.classList.remove("show");
+
+    if (modal) {
+        modal.classList.remove("show");
+    }
 });
 
 safeOn("confirmLogout", "click", () => {
-    alert("This demo login is local to the browser. Connect a real authentication system for secure logout.");
+    alert(
+        "This demo login is local to the browser. " +
+        "Connect a real authentication system for secure logout."
+    );
 
     const modal = get("logoutModal");
-    if (modal) modal.classList.remove("show");
-});
 
+    if (modal) {
+        modal.classList.remove("show");
+    }
+});
 /* ---------------- SCHEDULES ---------------- */
 
 function loadSchedules() {
     try {
         const saved = localStorage.getItem("relaySchedules");
+
         if (saved) {
             const parsed = JSON.parse(saved);
-            if (Array.isArray(parsed)) schedules = parsed;
+
+            if (Array.isArray(parsed)) {
+                schedules = parsed;
+            }
         }
     } catch (error) {
         console.warn("Could not load schedules:", error);
     }
+
+    renderSchedules();
 }
 
-function saveSchedules() {
+function saveSchedulesToStorage() {
     try {
-        localStorage.setItem("relaySchedules", JSON.stringify(schedules));
+        localStorage.setItem(
+            "relaySchedules",
+            JSON.stringify(schedules)
+        );
     } catch (error) {
         console.error("Could not save schedules:", error);
+
+        addNotification(
+            "Schedule Error",
+            "The schedule could not be saved in this browser.",
+            "danger"
+        );
     }
 }
-
-function closeSchedule() {
-    const modal = get("scheduleModal");
-    if (modal) modal.classList.remove("show");
-}
-
-safeOn("addScheduleBtn", "click", () => {
-    const modal = get("scheduleModal");
-    if (modal) modal.classList.add("show");
-});
-
-safeOn("closeSchedule", "click", closeSchedule);
-safeOn("cancelSchedule", "click", closeSchedule);
-
-safeOn("saveSchedule", "click", () => {
-    const relay = get("scheduleRelay")?.value;
-    const action = get("scheduleAction")?.value;
-    const date = get("scheduleDate")?.value;
-    const time = get("scheduleTime")?.value;
-    const repeat = get("scheduleRepeat")?.value || "Once";
-
-    if (!relay || !action || !date || !time) {
-        alert("Please select the relay, action, date, and time.");
-        return;
-    }
-
-    const runAt = new Date(`${date}T${time}`);
-
-    if (Number.isNaN(runAt.getTime())) {
-        alert("Please enter a valid date and time.");
-        return;
-    }
-
-    if (runAt.getTime() <= Date.now()) {
-        alert("Choose a future date and time.");
-        return;
-    }
-
-    schedules.push({
-        id: Date.now(),
-        relay: String(relay),
-        action: String(action).toUpperCase(),
-        date,
-        time,
-        repeat,
-        enabled: true,
-        lastRunKey: null
-    });
-
-    saveSchedules();
-    renderSchedules();
-    closeSchedule();
-
-    addLog(
-        "SCHEDULE",
-        "CREATED",
-        `Relay ${relay} ${action} at ${date} ${time}; repeat: ${repeat}`,
-        "SUCCESS"
-    );
-
-    addNotification(
-        "Schedule Created",
-        `Relay ${relay} ${action} scheduled for ${date} ${time}.`,
-        "info"
-    );
-});
 
 function renderSchedules() {
-    const list = get("scheduleList");
-    if (!list) return;
+    const container = get("scheduleList");
+    if (!container) return;
 
     if (schedules.length === 0) {
-        list.innerHTML = `
+        container.innerHTML = `
             <div class="empty-page small-empty">
                 <i class="fa-regular fa-calendar"></i>
                 <h2>No schedules</h2>
@@ -1079,211 +1233,337 @@ function renderSchedules() {
         return;
     }
 
-    list.innerHTML = schedules.map(schedule => `
-        <div class="schedule-item">
-            <div class="relay-color">
-                <i class="fa-solid fa-bolt"></i>
+    container.innerHTML = schedules.map((schedule, index) => `
+        <div class="schedule-card">
+            <div>
+                <h3>Relay ${escapeHTML(schedule.relay)}</h3>
+                <p>
+                    ${escapeHTML(schedule.action)}
+                    · ${escapeHTML(schedule.date)}
+                    · ${escapeHTML(schedule.time)}
+                </p>
+                <small>Repeat: ${escapeHTML(schedule.repeat)}</small>
             </div>
-            <div class="schedule-info">
-                <strong>
-                    Relay ${escapeHTML(schedule.relay)}
-                    → ${escapeHTML(schedule.action)}
-                </strong>
-                <small>
-                    ${escapeHTML(schedule.date)} •
-                    ${escapeHTML(schedule.time)} •
-                    ${escapeHTML(schedule.repeat)}
-                    • ${schedule.enabled ? "Enabled" : "Disabled"}
-                </small>
-            </div>
-            <div class="schedule-actions">
-                <button class="delete-schedule"
-                    data-id="${Number(schedule.id)}"
-                    aria-label="Delete schedule">
-                    <i class="fa-solid fa-trash"></i>
-                </button>
-            </div>
+            <button
+                type="button"
+                class="delete-schedule"
+                data-schedule-index="${index}"
+            >
+                Delete
+            </button>
         </div>
     `).join("");
 
-    list.querySelectorAll(".delete-schedule").forEach(button => {
+    container.querySelectorAll("[data-schedule-index]").forEach(button => {
         button.addEventListener("click", () => {
-            deleteSchedule(Number(button.dataset.id));
+            const index = Number(button.dataset.scheduleIndex);
+
+            if (!Number.isInteger(index) || !schedules[index]) return;
+
+            schedules.splice(index, 1);
+            saveSchedulesToStorage();
+            renderSchedules();
         });
     });
 }
 
-function deleteSchedule(id) {
-    schedules = schedules.filter(schedule => schedule.id !== id);
+function closeScheduleModal() {
+    const modal = get("scheduleModal");
 
-    saveSchedules();
-    renderSchedules();
-
-    addLog("SCHEDULE", "DELETED", "Schedule removed.", "SUCCESS");
+    if (modal) {
+        modal.classList.remove("show");
+    }
 }
 
-function scheduleTick() {
+safeOn("addScheduleBtn", "click", () => {
+    const modal = get("scheduleModal");
+
+    if (modal) {
+        modal.classList.add("show");
+    }
+});
+
+safeOn("closeSchedule", "click", closeScheduleModal);
+safeOn("cancelSchedule", "click", closeScheduleModal);
+
+safeOn("saveSchedule", "click", () => {
+    const relay = Number(get("scheduleRelay")?.value);
+    const action = get("scheduleAction")?.value;
+    const date = get("scheduleDate")?.value;
+    const time = get("scheduleTime")?.value;
+    const repeat = get("scheduleRepeat")?.value;
+
+    if (
+        !Number.isInteger(relay) ||
+        relay < 1 ||
+        relay > RELAY_COUNT ||
+        !["ON", "OFF"].includes(action) ||
+        !date ||
+        !time ||
+        !["once", "daily", "weekly"].includes(repeat)
+    ) {
+        alert("Please enter valid schedule details.");
+        return;
+    }
+
+    const scheduledDate = new Date(`${date}T${time}`);
+
+    if (Number.isNaN(scheduledDate.getTime())) {
+        alert("The selected date or time is invalid.");
+        return;
+    }
+
+    if (repeat === "once" && scheduledDate.getTime() <= Date.now()) {
+        alert("Choose a future date and time.");
+        return;
+    }
+
+    schedules.push({
+        id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        relay,
+        action,
+        date,
+        time,
+        repeat,
+        executedAt: null
+    });
+
+    saveSchedulesToStorage();
+    renderSchedules();
+    closeScheduleModal();
+
+    addLog(
+        "Scheduler",
+        "SCHEDULE CREATED",
+        `Relay ${relay}: ${action}, ${date} ${time}, ${repeat}`,
+        "SUCCESS"
+    );
+});
+
+/* ---------------- SCHEDULE EXECUTION ---------------- */
+
+// Browser-based schedules only run while this page is open.
+// This is not a replacement for a server-side scheduler.
+function checkSchedules() {
     const now = new Date();
 
     schedules.forEach(schedule => {
-        if (!schedule.enabled) return;
+        const [year, month, day] = schedule.date.split("-").map(Number);
+        const [hour, minute] = schedule.time.split(":").map(Number);
 
-        const scheduledTime = new Date(`${schedule.date}T${schedule.time}`);
-        if (Number.isNaN(scheduledTime.getTime())) return;
+        const target = new Date(
+            year,
+            month - 1,
+            day,
+            hour,
+            minute,
+            0,
+            0
+        );
 
-        const repeat = String(schedule.repeat).toLowerCase();
-        let shouldRun = false;
-        let runKey = "";
+        if (now < target) return;
 
-        if (repeat === "daily" || repeat === "every day") {
-            shouldRun =
-                now.getHours() === scheduledTime.getHours() &&
-                now.getMinutes() === scheduledTime.getMinutes();
+        const matches =
+            schedule.repeat === "daily"
+                ? now.getHours() === hour &&
+                  now.getMinutes() === minute
+                : schedule.repeat === "weekly"
+                    ? now.getHours() === hour &&
+                      now.getMinutes() === minute &&
+                      now.getDay() === target.getDay()
+                    : now.getTime() >= target.getTime() &&
+                      !schedule.executedAt;
 
-            runKey = `${now.getFullYear()}-${now.getMonth()}-${now.getDate()}-${schedule.time}`;
-        } else if (
-            repeat === "weekly" ||
-            repeat === "every week"
-        ) {
-            shouldRun =
-                now.getDay() === scheduledTime.getDay() &&
-                now.getHours() === scheduledTime.getHours() &&
-                now.getMinutes() === scheduledTime.getMinutes();
+        if (!matches) return;
 
-            runKey = `${now.getFullYear()}-${now.getMonth()}-${now.getDate()}-${schedule.time}`;
-        } else {
-            // One-time schedules.
-            shouldRun = now >= scheduledTime;
-            runKey = `once-${schedule.id}`;
-
-            if (shouldRun) schedule.enabled = false;
-        }
-
-        if (!shouldRun || schedule.lastRunKey === runKey) return;
-
-        // Mark this occurrence to prevent repeated execution during
-        // the same minute.
-        schedule.lastRunKey = runKey;
-
-        const relayNumber = Number(schedule.relay);
-        const state = String(schedule.action).toUpperCase() === "ON";
-
-        if (!client || !client.connected) {
-            addLog(
-                "SCHEDULE",
-                "NOT EXECUTED",
-                `Relay ${relayNumber} schedule skipped because MQTT is disconnected.`,
-                "FAIL"
-            );
+        if (schedule.executedAt === `${now.toDateString()} ${hour}:${minute}`) {
             return;
         }
 
-        sendRelayCommand(relayNumber, state);
+        sendRelayCommand(
+            Number(schedule.relay),
+            schedule.action === "ON"
+        );
+
+        schedule.executedAt = `${now.toDateString()} ${hour}:${minute}`;
 
         addLog(
-            "SCHEDULE",
-            "TRIGGERED",
-            `Relay ${relayNumber} ${state ? "ON" : "OFF"} command triggered.`,
+            "Scheduler",
+            "SCHEDULE TRIGGERED",
+            `Relay ${schedule.relay}: ${schedule.action}`,
             "INFO"
         );
+
+        if (schedule.repeat === "once") {
+            schedule.completed = true;
+        }
     });
 
-    saveSchedules();
-    renderSchedules();
+    const remaining = schedules.filter(schedule => !schedule.completed);
+
+    if (remaining.length !== schedules.length) {
+        schedules = remaining;
+        saveSchedulesToStorage();
+        renderSchedules();
+    }
 }
 
-window.deleteSchedule = deleteSchedule;
+setInterval(checkSchedules, 1000);
 
-loadSchedules();
-renderSchedules();
-setInterval(scheduleTick, 1000);
-
-/* ---------------- SETTINGS ---------------- */
+/* ---------------- MQTT SETTINGS ---------------- */
 
 safeOn("saveSettings", "click", () => {
-    const serverInput = get("mqttServerInput");
-    const deviceInput = get("deviceIdInput");
+    const brokerInput = get("mqttServerInput");
 
-    const server = serverInput?.value.trim();
-    const device = deviceInput?.value.trim();
-
-    if (!server) {
-        alert("Enter the MQTT WebSocket address.");
+    if (!brokerInput) {
+        console.warn("MQTT settings input was not found.");
         return;
     }
 
-    if (!/^wss?:\/\//i.test(server)) {
-        alert("The MQTT address must begin with ws:// or wss://");
+    const broker = brokerInput.value.trim();
+
+    if (!/^wss:\/\//i.test(broker)) {
+        alert("Enter a secure WebSocket URL beginning with wss://");
         return;
     }
 
     try {
-        localStorage.setItem("mqttServer", server);
-        localStorage.setItem("deviceId", device || "");
+        const parsed = new URL(broker);
+
+        if (!parsed.hostname) {
+            throw new Error("Missing broker hostname");
+        }
     } catch (error) {
-        alert("Could not save settings in this browser.");
+        alert("The MQTT WebSocket URL is invalid.");
         return;
     }
 
-    if (server !== MQTT_BROKER) {
-        MQTT_BROKER = server;
-        connectMQTT();
+    MQTT_BROKER = broker;
+
+    try {
+        localStorage.setItem("mqttServer", broker);
+    } catch (error) {
+        alert("Could not save the MQTT address in this browser.");
+        return;
     }
 
-    addLog("SETTINGS", "SAVED", "Dashboard settings updated.", "SUCCESS");
-    alert("Settings saved. MQTT connection is being updated if necessary.");
+    connectMQTT();
 });
 
-/* ---------------- CLOCK & LAST UPDATE ---------------- */
+function loadMQTTSettings() {
+    const brokerInput = get("mqttServerInput");
+
+    if (brokerInput) {
+        brokerInput.value = MQTT_BROKER;
+    }
+}
+
+safeOn("resetSettings", "click", () => {
+    MQTT_BROKER = DEFAULT_MQTT_BROKER;
+
+    try {
+        localStorage.setItem("mqttServer", MQTT_BROKER);
+    } catch (error) {
+        console.warn("Could not save default MQTT URL:", error);
+    }
+
+    loadMQTTSettings();
+    connectMQTT();
+});
+
+
+/* ---------------- THEME ---------------- */
+
+function applyTheme(theme) {
+    const isDark = theme === "dark";
+
+    // Apply the theme class used by your CSS
+    document.body.classList.toggle("dark-mode", isDark);
+
+    // Update the toggle button icon
+    const button = document.getElementById("theme-toggle");
+
+    if (button) {
+        button.textContent = isDark ? "🌙" : "☀️";
+        button.setAttribute(
+            "title",
+            isDark ? "Switch to light mode" : "Switch to dark mode"
+        );
+        button.setAttribute(
+            "aria-label",
+            isDark ? "Switch to light mode" : "Switch to dark mode"
+        );
+    }
+
+    // Save the selected theme
+    try {
+        localStorage.setItem("relayTheme", isDark ? "dark" : "light");
+    } catch (error) {
+        console.error("Unable to save theme:", error);
+    }
+}
+
+function initializeTheme() {
+    let savedTheme = "light";
+
+    try {
+        savedTheme =
+            localStorage.getItem("relayTheme") ||
+            localStorage.getItem("theme") ||
+            "light";
+    } catch (error) {
+        console.warn("Could not load saved theme:", error);
+    }
+
+    applyTheme(savedTheme);
+}
+
+// Register the toggle click handler
+safeOn("theme-toggle", "click", () => {
+    const isDark = document.body.classList.contains("dark-mode");
+
+    applyTheme(isDark ? "light" : "dark");
+
+    console.log(
+        "Theme changed to:",
+        document.body.classList.contains("dark-mode") ? "dark" : "light"
+    );
+});
+
+/* ---------------- CLOCK ---------------- */
 
 function updateClock() {
-    setText("currentTime", new Date().toLocaleTimeString());
+    setText(
+        "currentTime",
+        new Date().toLocaleTimeString()
+    );
 }
+
+updateClock();
+setInterval(updateClock, 1000);
+
+/* ---------------- LAST UPDATE ---------------- */
 
 function updateLastUpdate() {
-    setText("lastUpdate", new Date().toLocaleTimeString());
+    setText(
+        "lastUpdate",
+        new Date().toLocaleTimeString()
+    );
 }
+
+/* ---------------- MQTT VISUAL STATUS ---------------- */
 
 function updateMQTTColor(connected) {
-    const element = get("mqttStatus");
+    const element = get("systemDot");
 
     if (element) {
-        element.style.color = connected ? "#16a34a" : "#dc2626";
+        element.classList.toggle(
+            "online",
+            Boolean(connected && deviceConnected)
+        );
     }
 }
 
-setInterval(updateClock, 1000);
-updateClock();
-
-/* ---------------- LIGHT / DARK MODE ---------------- */
-
-safeOn("theme-toggle", "click", () => {
-    document.body.classList.toggle("dark-mode");
-
-    const dark = document.body.classList.contains("dark-mode");
-    const button = get("theme-toggle");
-
-    if (button) button.textContent = dark ? "☀️" : "🌙";
-
-    try {
-        localStorage.setItem("theme", dark ? "dark" : "light");
-    } catch (error) {
-        console.warn("Could not save theme:", error);
-    }
-});
-
-try {
-    const savedTheme = localStorage.getItem("theme");
-
-    if (savedTheme === "dark") {
-        document.body.classList.add("dark-mode");
-
-        const button = get("theme-toggle");
-        if (button) button.textContent = "☀️";
-    }
-} catch (error) {
-    console.warn("Could not load theme:", error);
-}
 
 /* ---------------- LOGIN ---------------- */
 
@@ -1295,18 +1575,33 @@ safeOn("loginForm", "submit", event => {
     const errorElement = get("loginError");
     const loginScreen = get("loginScreen");
 
-    // Demo-only credentials. This is not secure authentication.
-    if (username === "the beyonders" && password === "12345678") {
-        if (errorElement) errorElement.textContent = "";
-        if (loginScreen) loginScreen.style.display = "none";
+    // Original demo login credentials
+    if (
+        username === "the beyonders" &&
+        password === "12345678"
+    ) {
+        if (errorElement) {
+            errorElement.textContent = "";
+        }
 
-        addLog("LOGIN", "SUCCESS", "Demo login successful.", "SUCCESS");
+        if (loginScreen) {
+            loginScreen.style.display = "none";
+        }
+
+        addLog(
+            "LOGIN",
+            "SUCCESS",
+            "Demo login successful.",
+            "SUCCESS"
+        );
     } else {
         if (errorElement) {
-            errorElement.textContent = "Incorrect username or password.";
+            errorElement.textContent =
+                "Incorrect username or password.";
         }
 
         const passwordInput = get("password");
+
         if (passwordInput) {
             passwordInput.value = "";
             passwordInput.focus();
@@ -1314,25 +1609,262 @@ safeOn("loginForm", "submit", event => {
     }
 });
 
-/* ---------------- INITIALIZE DASHBOARD ---------------- */
 
-disableControls();
-setRelaysUnknown();
-updateDeviceUI(false);
-updateSIMUI();
-renderNotifications();
-renderLogs();
-renderSchedules();
+/* ---------------- APPLICATION INITIALIZATION ---------------- */
 
-// Populate settings inputs from saved values.
-if (get("mqttServerInput")) {
-    get("mqttServerInput").value = MQTT_BROKER;
+function initializeDashboard() {
+    loadMQTTSettings();
+
+    applyTheme(
+        localStorage.getItem("relayTheme") || "light"
+    );
+
+    loadSchedules();
+    renderLogs();
+    renderNotifications();
+    updateClock();
+    updateActiveCount();
+
+    for (let i = 1; i <= RELAY_COUNT; i++) {
+        const mainToggle = get(`relay${i}-toggle`);
+        const controlToggle = get(`control-relay${i}`);
+
+        if (mainToggle) mainToggle.checked = false;
+        if (controlToggle) controlToggle.checked = false;
+    }
+
+    connectMQTT();
 }
 
-if (get("deviceIdInput")) {
-    get("deviceIdInput").value =
-        localStorage.getItem("deviceId") || "";
+if (document.readyState === "loading") {
+    document.addEventListener(
+        "DOMContentLoaded",
+        initializeDashboard,
+        { once: true }
+    );
+} else {
+    initializeDashboard();
 }
 
-// Connect after all event handlers and UI initialization.
-connectMQTT();
+/* =========================================================
+   MQTT CONNECTION DIAGNOSTICS AND RECOVERY
+   APPEND THIS BLOCK AT THE END OF YOUR EXISTING SCRIPT
+   ========================================================= */
+
+(function mqttConnectionRecovery() {
+    "use strict";
+
+    const MQTT_RECOVERY = {
+        retryDelay: 5000,
+        maxRetries: 5,
+        retries: 0,
+        timer: null
+    };
+
+    function showMQTTMessage(message) {
+        console.log("[MQTT DIAGNOSTICS]", message);
+
+        const statusElement = document.getElementById("mqttAlert");
+
+        if (statusElement) {
+            statusElement.textContent = message;
+        }
+    }
+
+    function validateMQTTConfiguration() {
+        if (typeof mqtt === "undefined") {
+            showMQTTMessage(
+                "MQTT.js library is missing. Check index.html."
+            );
+            return false;
+        }
+
+        if (typeof MQTT_BROKER !== "string" || !MQTT_BROKER.trim()) {
+            showMQTTMessage("MQTT broker URL is missing.");
+            return false;
+        }
+
+        try {
+            const brokerURL = new URL(MQTT_BROKER);
+
+            if (
+                brokerURL.protocol !== "wss:" ||
+                !brokerURL.hostname
+            ) {
+                showMQTTMessage(
+                    "Use a valid secure WebSocket URL: wss://..."
+                );
+                return false;
+            }
+        } catch (error) {
+            showMQTTMessage("Invalid MQTT broker URL.");
+            return false;
+        }
+
+        return true;
+    }
+
+    function inspectMQTTConnection() {
+        if (typeof client === "undefined" || !client) {
+            console.warn(
+                "[MQTT] Client has not been initialized."
+            );
+            return;
+        }
+
+        console.log("[MQTT] Broker:", MQTT_BROKER);
+        console.log("[MQTT] Connected:", client.connected);
+        console.log("[MQTT] Reconnecting:", client.reconnecting);
+
+        if (client.connected) {
+            MQTT_RECOVERY.retries = 0;
+            showMQTTMessage("Connected to MQTT broker.");
+        } else {
+            showMQTTMessage(
+                "MQTT disconnected. Check Console and Network > WS."
+            );
+        }
+    }
+
+    function retryMQTTConnection() {
+        if (MQTT_RECOVERY.timer) {
+            clearTimeout(MQTT_RECOVERY.timer);
+        }
+
+        if (!validateMQTTConfiguration()) {
+            return;
+        }
+
+        if (client && client.connected) {
+            MQTT_RECOVERY.retries = 0;
+            inspectMQTTConnection();
+            return;
+        }
+
+        if (MQTT_RECOVERY.retries >= MQTT_RECOVERY.maxRetries) {
+            showMQTTMessage(
+                "MQTT retry limit reached. Check credentials, " +
+                "broker URL, WebSocket path and EMQX permissions."
+            );
+            console.error(
+                "[MQTT] Automatic recovery stopped after 5 attempts."
+            );
+            return;
+        }
+
+        MQTT_RECOVERY.retries++;
+
+        console.log(
+            `[MQTT] Recovery attempt ${MQTT_RECOVERY.retries}/` +
+            `${MQTT_RECOVERY.maxRetries}`
+        );
+
+        /*
+         * The original MQTT.js client already reconnects
+         * automatically using reconnectPeriod: 3000.
+         * Avoid creating multiple clients while it is retrying.
+         */
+        if (client && client.reconnecting) {
+            MQTT_RECOVERY.timer = setTimeout(
+                retryMQTTConnection,
+                MQTT_RECOVERY.retryDelay
+            );
+            return;
+        }
+
+        /*
+         * If the original client has stopped reconnecting,
+         * start a new connection through the existing function.
+         */
+        if (!client || !client.connected) {
+            connectMQTT();
+        }
+
+        MQTT_RECOVERY.timer = setTimeout(() => {
+            if (client && client.connected) {
+                MQTT_RECOVERY.retries = 0;
+                inspectMQTTConnection();
+            } else {
+                retryMQTTConnection();
+            }
+        }, MQTT_RECOVERY.retryDelay);
+    }
+
+    /*
+     * Extra diagnostic event listeners.
+     * These do not replace the original MQTT handlers.
+     */
+    function attachDiagnostics() {
+        if (typeof client === "undefined" || !client) {
+            return;
+        }
+
+        client.on("connect", () => {
+            MQTT_RECOVERY.retries = 0;
+
+            if (MQTT_RECOVERY.timer) {
+                clearTimeout(MQTT_RECOVERY.timer);
+                MQTT_RECOVERY.timer = null;
+            }
+
+            console.info("[MQTT] Connection established successfully.");
+        });
+
+        client.on("error", error => {
+            console.error(
+                "[MQTT] Diagnostic error:",
+                error.message || error
+            );
+        });
+
+        client.on("close", () => {
+            console.warn("[MQTT] WebSocket/MQTT connection closed.");
+        });
+    }
+
+    /*
+     * Observe the existing connection without replacing it.
+     */
+    function initializeMQTTDiagnostics() {
+        if (!validateMQTTConfiguration()) {
+            return;
+        }
+
+        if (typeof client !== "undefined" && client) {
+            attachDiagnostics();
+            inspectMQTTConnection();
+        } else {
+            console.warn(
+                "[MQTT] Waiting for the original connection function."
+            );
+        }
+    }
+
+    /*
+     * Manual recovery function available in the browser console:
+     * retryMQTTNow()
+     */
+    window.retryMQTTNow = function () {
+        MQTT_RECOVERY.retries = 0;
+        retryMQTTConnection();
+    };
+
+    window.inspectMQTTNow = inspectMQTTConnection;
+
+    /*
+     * Run diagnostics after the existing dashboard initialization.
+     */
+    if (document.readyState === "loading") {
+        document.addEventListener(
+            "DOMContentLoaded",
+            initializeMQTTDiagnostics,
+            { once: true }
+        );
+    } else {
+        initializeMQTTDiagnostics();
+    }
+
+    console.log(
+        "[MQTT] Recovery and diagnostic helpers loaded."
+    );
+})();
