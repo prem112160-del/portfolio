@@ -1868,3 +1868,62 @@ if (document.readyState === "loading") {
         "[MQTT] Recovery and diagnostic helpers loaded."
     );
 })();
+
+/* ===== MOBILE SIDEBAR TOGGLE ===== */
+(function setupMobileSidebar() {
+    const sidebar = document.querySelector(".sidebar");
+
+    if (!sidebar || document.getElementById("mobileMenuToggle")) {
+        return;
+    }
+
+    const menuButton = document.createElement("button");
+    menuButton.id = "mobileMenuToggle";
+    menuButton.type = "button";
+    menuButton.textContent = "\u2630";
+    menuButton.setAttribute("aria-label", "Open navigation menu");
+    menuButton.setAttribute("aria-expanded", "false");
+
+    const overlay = document.createElement("div");
+    overlay.id = "mobileSidebarOverlay";
+
+    document.body.appendChild(overlay);
+    document.body.appendChild(menuButton);
+
+    function closeSidebar() {
+        document.body.classList.remove("mobile-sidebar-open");
+        menuButton.setAttribute("aria-expanded", "false");
+        menuButton.setAttribute("aria-label", "Open navigation menu");
+    }
+
+    function toggleSidebar() {
+        const isOpen = document.body.classList.toggle(
+            "mobile-sidebar-open"
+        );
+
+        menuButton.setAttribute("aria-expanded", String(isOpen));
+        menuButton.setAttribute(
+            "aria-label",
+            isOpen ? "Close navigation menu" : "Open navigation menu"
+        );
+    }
+
+    menuButton.addEventListener("click", toggleSidebar);
+    overlay.addEventListener("click", closeSidebar);
+
+    sidebar.querySelectorAll(".menu-item").forEach(item => {
+        item.addEventListener("click", closeSidebar);
+    });
+
+    document.addEventListener("keydown", event => {
+        if (event.key === "Escape") {
+            closeSidebar();
+        }
+    });
+
+    window.addEventListener("resize", () => {
+        if (window.innerWidth > 600) {
+            closeSidebar();
+        }
+    });
+})();
