@@ -2502,3 +2502,107 @@ strong {
         grid-template-columns: minmax(0, 1fr) !important;
     }
 }
+
+/* ===== MOBILE SLIDE-OUT SIDEBAR ===== */
+@media screen and (max-width: 600px) {
+    .sidebar {
+        position: fixed !important;
+        top: 0;
+        left: 0;
+        bottom: 0;
+        width: 260px !important;
+        max-width: 85vw;
+        height: 100dvh;
+        padding: 20px 14px !important;
+        overflow-y: auto;
+        z-index: 3001;
+        transform: translateX(-100%);
+        visibility: hidden;
+        transition: transform 0.25s ease, visibility 0.25s ease;
+        box-shadow: none;
+    }
+
+    body.mobile-sidebar-open .sidebar {
+        transform: translateX(0);
+        visibility: visible;
+        box-shadow: 4px 0 24px rgba(0, 0, 0, 0.18);
+    }
+
+    body.mobile-sidebar-open {
+        overflow: hidden;
+    }
+
+    /* Restore navigation labels inside the open sidebar */
+    .sidebar .brand > div:last-child,
+    .sidebar .system-status,
+    .sidebar .user-box > div,
+    .sidebar .user-box > i {
+        display: block !important;
+    }
+
+    .sidebar .brand {
+        justify-content: flex-start;
+        padding: 0 8px 20px;
+    }
+
+    .sidebar .menu-item {
+        justify-content: flex-start;
+        gap: 12px;
+        padding: 0 12px;
+        font-size: 16px !important;
+    }
+
+    .sidebar .menu-item i {
+        font-size: 17px !important;
+        width: 20px;
+        flex-shrink: 0;
+    }
+
+    /* Main dashboard uses the full phone width */
+    .main {
+        width: 100% !important;
+        min-width: 0;
+        margin-left: 0 !important;
+        padding: 65px 14px 18px !important;
+    }
+
+    /* Menu button */
+    #mobileMenuToggle {
+        position: fixed;
+        top: 12px;
+        left: 12px;
+        width: 42px;
+        height: 42px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        background: var(--card);
+        color: var(--text);
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
+        font-size: 22px !important;
+        z-index: 3003;
+        cursor: pointer;
+    }
+
+    /* Dimmed background behind the open sidebar */
+    #mobileSidebarOverlay {
+        position: fixed;
+        inset: 0;
+        background: rgba(0, 0, 0, 0.42);
+        z-index: 3000;
+        display: none;
+    }
+
+    body.mobile-sidebar-open #mobileSidebarOverlay {
+        display: block;
+    }
+}
+
+@media screen and (min-width: 601px) {
+    #mobileMenuToggle,
+    #mobileSidebarOverlay {
+        display: none !important;
+    }
+}
