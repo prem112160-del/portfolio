@@ -2280,3 +2280,184 @@ strong {
     font-weight: 500 !important;
 }
 
+/* ===== MOBILE ALIGNMENT FIX ===== */
+@media screen and (max-width: 600px) {
+    html,
+    body {
+        width: 100%;
+        max-width: 100%;
+        overflow-x: hidden;
+    }
+
+    /* Give the phone the full screen width */
+    .sidebar {
+        width: 60px !important;
+        padding: 12px 6px !important;
+    }
+
+    .sidebar .brand > div:last-child,
+    .sidebar .system-status,
+    .sidebar .user-box > div,
+    .sidebar .user-box > i {
+        display: none !important;
+    }
+
+    .sidebar .brand {
+        justify-content: center;
+        padding: 0 0 16px;
+    }
+
+    .sidebar .menu-item {
+        width: 100%;
+        min-width: 0;
+        justify-content: center;
+        gap: 0;
+        padding: 0;
+        font-size: 0 !important;
+    }
+
+    .sidebar .menu-item i {
+        font-size: 17px !important;
+    }
+
+    .main {
+        width: calc(100% - 60px);
+        min-width: 0;
+        margin-left: 60px !important;
+        padding: 12px !important;
+    }
+
+    .header {
+        align-items: flex-start;
+        flex-direction: column;
+        gap: 12px;
+    }
+
+    .header h1,
+    .topbar h1,
+    .page-title,
+    #pageTitle {
+        max-width: 100%;
+        font-size: 25px !important;
+        line-height: 1.25;
+        overflow-wrap: break-word;
+    }
+
+    .header p,
+    .topbar p,
+    .page-subtitle,
+    #pageSubtitle {
+        font-size: 14px !important;
+    }
+
+    .header-buttons {
+        display: flex;
+        flex-wrap: wrap;
+        max-width: 100%;
+        gap: 6px;
+    }
+
+    .info-bar {
+        grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+        min-width: 0;
+    }
+
+    .info-box {
+        min-width: 0;
+        padding: 10px 6px;
+        gap: 6px;
+        overflow-wrap: anywhere;
+    }
+
+    .info-box strong {
+        font-size: 12px !important;
+        overflow-wrap: anywhere;
+    }
+
+    .stats,
+    .control-grid,
+    .device-grid,
+    .about-grid,
+    .about-stats {
+        grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+        min-width: 0;
+    }
+
+    .stat-card,
+    .control-card,
+    .device-card,
+    .panel,
+    .about-card {
+        min-width: 0;
+        padding: 12px;
+    }
+
+    .stat-card h2 {
+        font-size: 24px !important;
+    }
+
+    .panel-title h2,
+    .section-title {
+        font-size: 19px !important;
+    }
+
+    .relay {
+        min-width: 0;
+        gap: 6px;
+        padding: 8px 5px;
+    }
+
+    .relay-name {
+        min-width: 0;
+        overflow-wrap: anywhere;
+    }
+
+    .relay-name strong {
+        font-size: 12px !important;
+    }
+
+    .relay-status {
+        width: auto;
+        font-size: 11px !important;
+    }
+
+    .switch {
+        flex-shrink: 0;
+    }
+
+    .main-grid {
+        grid-template-columns: minmax(0, 1fr) !important;
+    }
+
+    .log-row {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    img,
+    table,
+    input,
+    select,
+    textarea {
+        max-width: 100%;
+    }
+}
+
+/* Extra-small phones */
+@media screen and (max-width: 380px) {
+    .main {
+        padding: 8px !important;
+    }
+
+    .stats,
+    .control-grid,
+    .device-grid,
+    .about-grid,
+    .about-stats {
+        grid-template-columns: minmax(0, 1fr) !important;
+    }
+
+    .header-buttons {
+        gap: 5px;
+    }
+}
+
