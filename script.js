@@ -1,9 +1,8 @@
+
 /* =========================================================
    SMART RELAY DASHBOARD
    ESP32 + SIM800L + MQTT
    ========================================================= */
-
-// Migrate an old saved localhost broker to the actual EMQX endpoint.
 
 /* ---------------- MQTT CONFIGURATION ---------------- */
 
@@ -64,7 +63,6 @@ const TOPICS = {
 
 /* ---------------- SYSTEM STATE ---------------- */
 
-// null means hardware state has not yet been confirmed.
 const relayState = {
     1: null,
     2: null,
@@ -72,7 +70,6 @@ const relayState = {
     4: null
 };
 
-// Commands awaiting hardware confirmation.
 const pendingCommands = {};
 
 let deviceConnected = false;
@@ -176,7 +173,6 @@ function connectMQTT() {
     }
 
     clearTimeout(reconnectTimer);
-
     setMQTTStatus(false, "Connecting...");
 
     try {
@@ -254,7 +250,6 @@ function connectMQTT() {
     client.on("offline", () => {
         setMQTTStatus(false, "Broker offline");
         disableControls();
-
         clearPendingCommandsOnDisconnect();
 
         addLog(
@@ -268,13 +263,11 @@ function connectMQTT() {
     client.on("close", () => {
         setMQTTStatus(false, "Disconnected");
         disableControls();
-
         clearPendingCommandsOnDisconnect();
     });
 
     client.on("error", error => {
         console.error("MQTT error:", error);
-
         setMQTTStatus(false, "Connection error");
 
         addLog(
@@ -340,7 +333,6 @@ function processRelayStatus(number, message) {
 
     relayState[number] = isOn;
 
-    // Hardware feedback, not a button click, confirms relay state.
     const pending = pendingCommands[number];
 
     if (pending) {
@@ -401,7 +393,6 @@ function updateRelayUI(number, isOn) {
         }
     }
 
-    // Synchronize the two views using confirmed hardware state.
     if (!pending) {
         if (mainToggle) mainToggle.checked = isOn;
         if (controlToggle) controlToggle.checked = isOn;
@@ -473,7 +464,6 @@ function sendRelayCommand(number, requestedState) {
     const command = state ? "ON" : "OFF";
     const topic = TOPICS.relaySet(number);
 
-    // Cancel the previous timeout if another command is issued.
     if (pendingCommands[number]) {
         clearTimeout(pendingCommands[number].timeoutId);
     }
@@ -492,7 +482,6 @@ function sendRelayCommand(number, requestedState) {
         if (pendingCommands[number] !== pending) return;
 
         delete pendingCommands[number];
-
         restoreRelaySwitch(number);
 
         addLog(
@@ -512,13 +501,11 @@ function sendRelayCommand(number, requestedState) {
     }, 10000);
 
     client.publish(topic, command, { qos: 1 }, error => {
-        // Ignore callbacks for a command superseded by a newer command.
         if (pendingCommands[number] !== pending) return;
 
         if (error) {
             clearTimeout(pending.timeoutId);
             delete pendingCommands[number];
-
             restoreRelaySwitch(number);
 
             addLog(
@@ -557,6 +544,8 @@ function sendRelayCommand(number, requestedState) {
     });
 }
 
+/* ---------------- PENDING RELAY UI ---------------- */
+
 function updatePendingUI(number) {
     const status = get(`status${number}`);
     const controlStatus = get(`control-status${number}`);
@@ -568,25 +557,27 @@ function updatePendingUI(number) {
 
     if (status) {
         status.className = "relay-status unknown";
-        status.innerHTML = "<span></span> WAITING FOR CONFIRMATION";
+        status.innerHTML =
+            `<span></span> WAITING FOR ${pending.state ? "ON" : "OFF"} CONFIRMATION`;
     }
 
     if (controlStatus) {
-        controlStatus.textContent = "WAITING FOR RESPONSE...";
+        controlStatus.textContent =
+            `WAITING FOR ${pending.state ? "ON" : "OFF"} CONFIRMATION`;
         controlStatus.style.color = "#d97706";
     }
 
-    // Keep the last confirmed hardware state visible while waiting.
-    if (relayState[number] !== null) {
-        if (mainToggle) mainToggle.checked = relayState[number];
-        if (controlToggle) controlToggle.checked = relayState[number];
-    } else {
-        if (mainToggle) mainToggle.checked = false;
-        if (controlToggle) controlToggle.checked = false;
+    // Show the requested state immediately while awaiting feedback.
+    // The switch remains disabled until matching feedback arrives.
+    if (mainToggle) {
+        mainToggle.checked = pending.state;
+        mainToggle.disabled = true;
     }
 
-    if (mainToggle) mainToggle.disabled = true;
-    if (controlToggle) controlToggle.disabled = true;
+    if (controlToggle) {
+        controlToggle.checked = pending.state;
+        controlToggle.disabled = true;
+    }
 }
 
 function restoreRelaySwitch(number) {
@@ -621,16 +612,27 @@ function restoreRelaySwitch(number) {
     enableControls();
 }
 
+/* ---------------- ALL RELAY CONTROLS ---------------- */
+
 function sendAllRelays(state) {
     if (!client || !client.connected) {
         alert("MQTT is not connected.");
+        console.error("Bulk relay command failed: MQTT disconnected.");
         return;
     }
 
+    const command = state ? "ON" : "OFF";
+
+    console.log(
+        `ALL ${command}: sending commands to ${RELAY_COUNT} relays`
+    );
+
     for (let i = 1; i <= RELAY_COUNT; i++) {
+        console.log(`Sending ${command} to relay ${i}`);
         sendRelayCommand(i, state);
     }
 }
+
 /* ---------------- CONTROL ENABLE/DISABLE ---------------- */
 
 function enableControls() {
@@ -689,6 +691,7 @@ for (let i = 1; i <= RELAY_COUNT; i++) {
 
 safeOn("allOnBtn", "click", () => sendAllRelays(true));
 safeOn("allOffBtn", "click", () => sendAllRelays(false));
+
 /* ---------------- ESP32 DEVICE STATUS ---------------- */
 
 function processDeviceStatus(message) {
@@ -799,8 +802,6 @@ function checkDeviceHeartbeat() {
             "danger"
         );
     }
-
-    // Confirmation timeouts are handled by each command's own timer.
 }
 
 setInterval(checkDeviceHeartbeat, 3000);
@@ -1188,17 +1189,54 @@ safeOn("cancelLogout", "click", () => {
 });
 
 safeOn("confirmLogout", "click", () => {
-    alert(
-        "This demo login is local to the browser. " +
-        "Connect a real authentication system for secure logout."
-    );
-
     const modal = get("logoutModal");
+    const loginScreen = get("loginScreen");
+    const usernameInput = get("username");
+    const passwordInput = get("password");
+    const errorElement = get("loginError");
 
-    if (modal) {
-        modal.classList.remove("show");
+    if (modal) modal.classList.remove("show");
+
+    // Close the MQTT connection during logout.
+    if (client) {
+        try {
+            client.end(true);
+        } catch (error) {
+            console.warn(
+                "Error closing MQTT connection during logout:",
+                error
+            );
+        }
+
+        client = null;
     }
+
+    clearTimeout(reconnectTimer);
+    clearPendingCommandsOnDisconnect();
+    disableControls();
+
+    // Hide the application pages.
+    document.querySelectorAll(".app-page").forEach(page => {
+        page.style.display = "none";
+    });
+
+    // Return to the login page.
+    if (loginScreen) {
+        loginScreen.style.display = "flex";
+    } else {
+        console.error(
+            'Login screen element "#loginScreen" was not found.'
+        );
+    }
+
+    // Clear the login fields.
+    if (usernameInput) usernameInput.value = "";
+    if (passwordInput) passwordInput.value = "";
+    if (errorElement) errorElement.textContent = "";
+
+    if (usernameInput) usernameInput.focus();
 });
+
 /* ---------------- SCHEDULES ---------------- */
 
 function loadSchedules() {
@@ -1360,8 +1398,7 @@ safeOn("saveSchedule", "click", () => {
 
 /* ---------------- SCHEDULE EXECUTION ---------------- */
 
-// Browser-based schedules only run while this page is open.
-// This is not a replacement for a server-side scheduler.
+// Browser-based schedules run only while this page is open.
 function checkSchedules() {
     const now = new Date();
 
@@ -1394,7 +1431,10 @@ function checkSchedules() {
 
         if (!matches) return;
 
-        if (schedule.executedAt === `${now.toDateString()} ${hour}:${minute}`) {
+        if (
+            schedule.executedAt ===
+            `${now.toDateString()} ${hour}:${minute}`
+        ) {
             return;
         }
 
@@ -1403,7 +1443,8 @@ function checkSchedules() {
             schedule.action === "ON"
         );
 
-        schedule.executedAt = `${now.toDateString()} ${hour}:${minute}`;
+        schedule.executedAt =
+            `${now.toDateString()} ${hour}:${minute}`;
 
         addLog(
             "Scheduler",
@@ -1488,7 +1529,6 @@ safeOn("resetSettings", "click", () => {
     loadMQTTSettings();
     connectMQTT();
 });
-
 /* ---------------- THEME ---------------- */
 
 function applyTheme(theme) {
@@ -1500,10 +1540,12 @@ function applyTheme(theme) {
 
     if (button) {
         button.textContent = isDark ? "🌙" : "☀️";
+
         button.setAttribute(
             "title",
             isDark ? "Switch to light mode" : "Switch to dark mode"
         );
+
         button.setAttribute(
             "aria-label",
             isDark ? "Switch to light mode" : "Switch to dark mode"
@@ -1543,26 +1585,23 @@ safeOn("theme-toggle", "click", () => {
     );
 });
 
+
 /* ---------------- CLOCK ---------------- */
 
 function updateClock() {
-    setText(
-        "currentTime",
-        new Date().toLocaleTimeString()
-    );
+    setText("currentTime", new Date().toLocaleTimeString());
 }
 
 updateClock();
 setInterval(updateClock, 1000);
 
+
 /* ---------------- LAST UPDATE ---------------- */
 
 function updateLastUpdate() {
-    setText(
-        "lastUpdate",
-        new Date().toLocaleTimeString()
-    );
+    setText("lastUpdate", new Date().toLocaleTimeString());
 }
+
 
 /* ---------------- MQTT VISUAL STATUS ---------------- */
 
@@ -1577,6 +1616,7 @@ function updateMQTTColor(connected) {
     }
 }
 
+
 /* ---------------- LOGIN ---------------- */
 
 safeOn("loginForm", "submit", event => {
@@ -1584,10 +1624,10 @@ safeOn("loginForm", "submit", event => {
 
     const username = get("username")?.value.trim() || "";
     const password = get("password")?.value || "";
+
     const errorElement = get("loginError");
     const loginScreen = get("loginScreen");
 
-    // Original demo login credentials
     if (
         username === "the beyonders" &&
         password === "12345678"
@@ -1621,7 +1661,8 @@ safeOn("loginForm", "submit", event => {
     }
 });
 
-/* ---------------- APPLICATION INITIALIZATION ---------------- */
+
+/* ---------------- INITIALIZATION ---------------- */
 
 function initializeDashboard() {
     loadMQTTSettings();
@@ -1629,19 +1670,30 @@ function initializeDashboard() {
     initializeTheme();
 
     loadSchedules();
+
     renderLogs();
+
     renderNotifications();
+
     updateClock();
+
     updateActiveCount();
 
+    // Start with relay toggles visually OFF.
     for (let i = 1; i <= RELAY_COUNT; i++) {
         const mainToggle = get(`relay${i}-toggle`);
         const controlToggle = get(`control-relay${i}`);
 
-        if (mainToggle) mainToggle.checked = false;
-        if (controlToggle) controlToggle.checked = false;
+        if (mainToggle) {
+            mainToggle.checked = false;
+        }
+
+        if (controlToggle) {
+            controlToggle.checked = false;
+        }
     }
 
+    // Connect to the MQTT broker.
     connectMQTT();
 }
 
@@ -1655,47 +1707,72 @@ if (document.readyState === "loading") {
     initializeDashboard();
 }
 
-/* ===== MOBILE SIDEBAR TOGGLE ===== */
+
+/* ---------------- MOBILE SIDEBAR ---------------- */
 
 (function setupMobileSidebar() {
     const sidebar = document.querySelector(".sidebar");
 
-    if (!sidebar || document.getElementById("mobileMenuToggle")) {
+    if (
+        !sidebar ||
+        document.getElementById("mobileMenuToggle")
+    ) {
         return;
     }
 
     const menuButton = document.createElement("button");
+
     menuButton.id = "mobileMenuToggle";
     menuButton.type = "button";
     menuButton.textContent = "\u2630";
-    menuButton.setAttribute("aria-label", "Open navigation menu");
+
+    menuButton.setAttribute(
+        "aria-label",
+        "Open navigation menu"
+    );
+
     menuButton.setAttribute("aria-expanded", "false");
 
     const overlay = document.createElement("div");
+
     overlay.id = "mobileSidebarOverlay";
 
     document.body.appendChild(overlay);
     document.body.appendChild(menuButton);
 
+
     function closeSidebar() {
         document.body.classList.remove("mobile-sidebar-open");
+
         menuButton.setAttribute("aria-expanded", "false");
-        menuButton.setAttribute("aria-label", "Open navigation menu");
-    }
 
-    function toggleSidebar() {
-        const isOpen = document.body.classList.toggle(
-            "mobile-sidebar-open"
-        );
-
-        menuButton.setAttribute("aria-expanded", String(isOpen));
         menuButton.setAttribute(
             "aria-label",
-            isOpen ? "Close navigation menu" : "Open navigation menu"
+            "Open navigation menu"
         );
     }
 
+
+    function toggleSidebar() {
+        const isOpen =
+            document.body.classList.toggle("mobile-sidebar-open");
+
+        menuButton.setAttribute(
+            "aria-expanded",
+            String(isOpen)
+        );
+
+        menuButton.setAttribute(
+            "aria-label",
+            isOpen
+                ? "Close navigation menu"
+                : "Open navigation menu"
+        );
+    }
+
+
     menuButton.addEventListener("click", toggleSidebar);
+
     overlay.addEventListener("click", closeSidebar);
 
     sidebar.querySelectorAll(".menu-item").forEach(item => {
