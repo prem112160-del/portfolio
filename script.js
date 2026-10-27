@@ -43,8 +43,8 @@ let MQTT_BROKER = (() => {
 
 function getMQTTCredentials() {
     return {
-        username: "the_beyonders",
-        password: "12345678"
+        username: "REPLACE_WITH_YOUR_EMQX_USERNAME",
+        password: "REPLACE_WITH_YOUR_NEW_EMQX_PASSWORD"
     };
 }
 
@@ -374,6 +374,7 @@ function processRelayStatus(number, message) {
     updateRelayUI(number, isOn);
     updateActiveCount();
     updateLastUpdate();
+    enableControls();
 }
 
 /* ---------------- RELAY UI ---------------- */
@@ -416,6 +417,7 @@ function updateRelayUI(number, isOn) {
             : (isOn ? "#16a34a" : "#dc2626");
     }
 }
+
 /* ---------------- UNKNOWN RELAY STATES ---------------- */
 
 function setRelaysUnknown() {
@@ -505,6 +507,8 @@ function sendRelayCommand(number, requestedState) {
             "No hardware confirmation received. Check the device and MQTT topics.",
             "danger"
         );
+
+        enableControls();
     }, 10000);
 
     client.publish(topic, command, { qos: 1 }, error => {
@@ -556,22 +560,33 @@ function sendRelayCommand(number, requestedState) {
 function updatePendingUI(number) {
     const status = get(`status${number}`);
     const controlStatus = get(`control-status${number}`);
+    const mainToggle = get(`relay${number}-toggle`);
+    const controlToggle = get(`control-relay${number}`);
     const pending = pendingCommands[number];
 
-    if (status && pending) {
+    if (!pending) return;
+
+    if (status) {
         status.className = "relay-status unknown";
-        status.innerHTML =
-            "<span></span> WAITING FOR CONFIRMATION";
+        status.innerHTML = "<span></span> WAITING FOR CONFIRMATION";
     }
 
-    if (controlStatus && pending) {
-        controlStatus.textContent =
-            `PENDING ${pending.state ? "ON" : "OFF"}`;
-
+    if (controlStatus) {
+        controlStatus.textContent = "WAITING FOR RESPONSE...";
         controlStatus.style.color = "#d97706";
     }
 
-    // Do not mark a relay ON/OFF before hardware feedback arrives.
+    // Keep the last confirmed hardware state visible while waiting.
+    if (relayState[number] !== null) {
+        if (mainToggle) mainToggle.checked = relayState[number];
+        if (controlToggle) controlToggle.checked = relayState[number];
+    } else {
+        if (mainToggle) mainToggle.checked = false;
+        if (controlToggle) controlToggle.checked = false;
+    }
+
+    if (mainToggle) mainToggle.disabled = true;
+    if (controlToggle) controlToggle.disabled = true;
 }
 
 function restoreRelaySwitch(number) {
@@ -602,6 +617,8 @@ function restoreRelaySwitch(number) {
             controlStatus.style.color = "#9ca3af";
         }
     }
+
+    enableControls();
 }
 
 function sendAllRelays(state) {
@@ -623,9 +640,11 @@ function enableControls() {
     for (let i = 1; i <= RELAY_COUNT; i++) {
         const mainToggle = get(`relay${i}-toggle`);
         const controlToggle = get(`control-relay${i}`);
+        const isPending = Boolean(pendingCommands[i]);
+        const disabled = !connected || isPending;
 
-        if (mainToggle) mainToggle.disabled = !connected;
-        if (controlToggle) controlToggle.disabled = !connected;
+        if (mainToggle) mainToggle.disabled = disabled;
+        if (controlToggle) controlToggle.disabled = disabled;
     }
 
     const allOn = get("allOnBtn");
@@ -671,7 +690,6 @@ for (let i = 1; i <= RELAY_COUNT; i++) {
 
 safeOn("allOnBtn", "click", () => sendAllRelays(true));
 safeOn("allOffBtn", "click", () => sendAllRelays(false));
-
 /* ---------------- ESP32 DEVICE STATUS ---------------- */
 
 function processDeviceStatus(message) {
@@ -845,6 +863,7 @@ function processGSMStatus(message) {
 
     updateLastUpdate();
 }
+
 /* ---------------- GSM SIGNAL CONVERSION ---------------- */
 
 function convertCSQ(csq) {
@@ -1471,16 +1490,13 @@ safeOn("resetSettings", "click", () => {
     connectMQTT();
 });
 
-
 /* ---------------- THEME ---------------- */
 
 function applyTheme(theme) {
     const isDark = theme === "dark";
 
-    // Apply the theme class used by your CSS
     document.body.classList.toggle("dark-mode", isDark);
 
-    // Update the toggle button icon
     const button = document.getElementById("theme-toggle");
 
     if (button) {
@@ -1495,7 +1511,6 @@ function applyTheme(theme) {
         );
     }
 
-    // Save the selected theme
     try {
         localStorage.setItem("relayTheme", isDark ? "dark" : "light");
     } catch (error) {
@@ -1518,7 +1533,6 @@ function initializeTheme() {
     applyTheme(savedTheme);
 }
 
-// Register the toggle click handler
 safeOn("theme-toggle", "click", () => {
     const isDark = document.body.classList.contains("dark-mode");
 
@@ -1564,7 +1578,6 @@ function updateMQTTColor(connected) {
     }
 }
 
-
 /* ---------------- LOGIN ---------------- */
 
 safeOn("loginForm", "submit", event => {
@@ -1609,15 +1622,12 @@ safeOn("loginForm", "submit", event => {
     }
 });
 
-
 /* ---------------- APPLICATION INITIALIZATION ---------------- */
 
 function initializeDashboard() {
     loadMQTTSettings();
 
-    applyTheme(
-        localStorage.getItem("relayTheme") || "light"
-    );
+    initializeTheme();
 
     loadSchedules();
     renderLogs();
@@ -1646,230 +1656,8 @@ if (document.readyState === "loading") {
     initializeDashboard();
 }
 
-/* =========================================================
-   MQTT CONNECTION DIAGNOSTICS AND RECOVERY
-   APPEND THIS BLOCK AT THE END OF YOUR EXISTING SCRIPT
-   ========================================================= */
-
-(function mqttConnectionRecovery() {
-    "use strict";
-
-    const MQTT_RECOVERY = {
-        retryDelay: 5000,
-        maxRetries: 5,
-        retries: 0,
-        timer: null
-    };
-
-    function showMQTTMessage(message) {
-        console.log("[MQTT DIAGNOSTICS]", message);
-
-        const statusElement = document.getElementById("mqttAlert");
-
-        if (statusElement) {
-            statusElement.textContent = message;
-        }
-    }
-
-    function validateMQTTConfiguration() {
-        if (typeof mqtt === "undefined") {
-            showMQTTMessage(
-                "MQTT.js library is missing. Check index.html."
-            );
-            return false;
-        }
-
-        if (typeof MQTT_BROKER !== "string" || !MQTT_BROKER.trim()) {
-            showMQTTMessage("MQTT broker URL is missing.");
-            return false;
-        }
-
-        try {
-            const brokerURL = new URL(MQTT_BROKER);
-
-            if (
-                brokerURL.protocol !== "wss:" ||
-                !brokerURL.hostname
-            ) {
-                showMQTTMessage(
-                    "Use a valid secure WebSocket URL: wss://..."
-                );
-                return false;
-            }
-        } catch (error) {
-            showMQTTMessage("Invalid MQTT broker URL.");
-            return false;
-        }
-
-        return true;
-    }
-
-    function inspectMQTTConnection() {
-        if (typeof client === "undefined" || !client) {
-            console.warn(
-                "[MQTT] Client has not been initialized."
-            );
-            return;
-        }
-
-        console.log("[MQTT] Broker:", MQTT_BROKER);
-        console.log("[MQTT] Connected:", client.connected);
-        console.log("[MQTT] Reconnecting:", client.reconnecting);
-
-        if (client.connected) {
-            MQTT_RECOVERY.retries = 0;
-            showMQTTMessage("Connected to MQTT broker.");
-        } else {
-            showMQTTMessage(
-                "MQTT disconnected. Check Console and Network > WS."
-            );
-        }
-    }
-
-    function retryMQTTConnection() {
-        if (MQTT_RECOVERY.timer) {
-            clearTimeout(MQTT_RECOVERY.timer);
-        }
-
-        if (!validateMQTTConfiguration()) {
-            return;
-        }
-
-        if (client && client.connected) {
-            MQTT_RECOVERY.retries = 0;
-            inspectMQTTConnection();
-            return;
-        }
-
-        if (MQTT_RECOVERY.retries >= MQTT_RECOVERY.maxRetries) {
-            showMQTTMessage(
-                "MQTT retry limit reached. Check credentials, " +
-                "broker URL, WebSocket path and EMQX permissions."
-            );
-            console.error(
-                "[MQTT] Automatic recovery stopped after 5 attempts."
-            );
-            return;
-        }
-
-        MQTT_RECOVERY.retries++;
-
-        console.log(
-            `[MQTT] Recovery attempt ${MQTT_RECOVERY.retries}/` +
-            `${MQTT_RECOVERY.maxRetries}`
-        );
-
-        /*
-         * The original MQTT.js client already reconnects
-         * automatically using reconnectPeriod: 3000.
-         * Avoid creating multiple clients while it is retrying.
-         */
-        if (client && client.reconnecting) {
-            MQTT_RECOVERY.timer = setTimeout(
-                retryMQTTConnection,
-                MQTT_RECOVERY.retryDelay
-            );
-            return;
-        }
-
-        /*
-         * If the original client has stopped reconnecting,
-         * start a new connection through the existing function.
-         */
-        if (!client || !client.connected) {
-            connectMQTT();
-        }
-
-        MQTT_RECOVERY.timer = setTimeout(() => {
-            if (client && client.connected) {
-                MQTT_RECOVERY.retries = 0;
-                inspectMQTTConnection();
-            } else {
-                retryMQTTConnection();
-            }
-        }, MQTT_RECOVERY.retryDelay);
-    }
-
-    /*
-     * Extra diagnostic event listeners.
-     * These do not replace the original MQTT handlers.
-     */
-    function attachDiagnostics() {
-        if (typeof client === "undefined" || !client) {
-            return;
-        }
-
-        client.on("connect", () => {
-            MQTT_RECOVERY.retries = 0;
-
-            if (MQTT_RECOVERY.timer) {
-                clearTimeout(MQTT_RECOVERY.timer);
-                MQTT_RECOVERY.timer = null;
-            }
-
-            console.info("[MQTT] Connection established successfully.");
-        });
-
-        client.on("error", error => {
-            console.error(
-                "[MQTT] Diagnostic error:",
-                error.message || error
-            );
-        });
-
-        client.on("close", () => {
-            console.warn("[MQTT] WebSocket/MQTT connection closed.");
-        });
-    }
-
-    /*
-     * Observe the existing connection without replacing it.
-     */
-    function initializeMQTTDiagnostics() {
-        if (!validateMQTTConfiguration()) {
-            return;
-        }
-
-        if (typeof client !== "undefined" && client) {
-            attachDiagnostics();
-            inspectMQTTConnection();
-        } else {
-            console.warn(
-                "[MQTT] Waiting for the original connection function."
-            );
-        }
-    }
-
-    /*
-     * Manual recovery function available in the browser console:
-     * retryMQTTNow()
-     */
-    window.retryMQTTNow = function () {
-        MQTT_RECOVERY.retries = 0;
-        retryMQTTConnection();
-    };
-
-    window.inspectMQTTNow = inspectMQTTConnection;
-
-    /*
-     * Run diagnostics after the existing dashboard initialization.
-     */
-    if (document.readyState === "loading") {
-        document.addEventListener(
-            "DOMContentLoaded",
-            initializeMQTTDiagnostics,
-            { once: true }
-        );
-    } else {
-        initializeMQTTDiagnostics();
-    }
-
-    console.log(
-        "[MQTT] Recovery and diagnostic helpers loaded."
-    );
-})();
-
 /* ===== MOBILE SIDEBAR TOGGLE ===== */
+
 (function setupMobileSidebar() {
     const sidebar = document.querySelector(".sidebar");
 
