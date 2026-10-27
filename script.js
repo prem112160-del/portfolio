@@ -42,8 +42,8 @@ let MQTT_BROKER = (() => {
 
 function getMQTTCredentials() {
     return {
-        username: "REPLACE_WITH_YOUR_EMQX_USERNAME",
-        password: "REPLACE_WITH_YOUR_NEW_EMQX_PASSWORD"
+        username: "the_beyonders",
+        password: "12345678"
     };
 }
 
