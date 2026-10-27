@@ -631,7 +631,6 @@ function sendAllRelays(state) {
         sendRelayCommand(i, state);
     }
 }
-
 /* ---------------- CONTROL ENABLE/DISABLE ---------------- */
 
 function enableControls() {
