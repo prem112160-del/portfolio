@@ -637,5 +637,121 @@ required
 
 <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
 <script src="script.js"></script>
+
+<script>
+document.querySelectorAll("p").forEach(function (p) {
+    if (p.textContent.includes("Energy monitoring")) {
+        p.textContent = p.textContent.replace(
+            /Energy monitoring,?\s*/i,
+            ""
+        );
+    }
+});
+</script>
+<!-- Add End Date and End Time to Existing Schedule Form -->
+
 </body>
 </html>
+<!-- Reverse Communication / Feedback Flow -->
+<style>
+    .reverse-communication {
+        margin-top: 18px;
+    }
+
+    .reverse-communication h3 {
+        margin-bottom: 12px;
+        font-size: 18px;
+    }
+
+    .reverse-communication .communication-flow {
+        display: flex;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 10px;
+        margin-bottom: 12px;
+    }
+
+    .reverse-communication .flow-node {
+        padding: 10px 12px;
+        border: 1px solid #86efac;
+        border-radius: 8px;
+        background: #ecfdf5;
+        color: #166534;
+        text-align: center;
+    }
+
+    .reverse-communication .flow-arrow {
+        color: #15803d;
+        font-weight: bold;
+        font-size: 20px;
+    }
+
+    @media (max-width: 700px) {
+        .reverse-communication .communication-flow {
+            gap: 6px;
+        }
+
+        .reverse-communication .flow-node {
+            padding: 8px;
+            font-size: 13px;
+        }
+    }
+</style>
+
+<script>
+document.addEventListener("DOMContentLoaded", function () {
+    const communicationHeading = Array.from(
+        document.querySelectorAll("h2")
+    ).find(heading => heading.textContent.trim() === "Communication");
+
+    if (!communicationHeading) return;
+
+    const card = communicationHeading.closest(".about-card");
+    if (!card || card.querySelector(".reverse-communication")) return;
+
+    const feedback = document.createElement("div");
+    feedback.className = "reverse-communication";
+
+    feedback.innerHTML = `
+        <h3>Feedback Transmission</h3>
+        <div class="communication-flow">
+            <div class="flow-node">Relay Status</div>
+            <span class="flow-arrow">→</span>
+            <div class="flow-node">ESP32</div>
+            <span class="flow-arrow">→</span>
+            <div class="flow-node">MQTT</div>
+            <span class="flow-arrow">→</span>
+            <div class="flow-node">Dashboard</div>
+        </div>
+        <p>Actual relay status is sent back to the dashboard for confirmation.</p>
+    `;
+
+    card.appendChild(feedback);
+});
+</script>
+<script>
+(function removeProfileButton() {
+    function removeProfile() {
+        document.querySelectorAll("[data-admin='profile']").forEach(function (button) {
+            button.remove();
+        });
+
+        // Also handle Profile buttons without a data-admin attribute.
+        document.querySelectorAll("button, a, div").forEach(function (element) {
+            if (
+                element.children.length <= 2 &&
+                element.textContent.trim() === "Profile" &&
+                element.closest(".admin-dropdown, .user-dropdown, .admin-menu")
+            ) {
+                element.remove();
+            }
+        });
+    }
+
+    if (document.readyState === "loading") {
+        document.addEventListener("DOMContentLoaded", removeProfile);
+    } else {
+        removeProfile();
+    }
+})();
+</script>
