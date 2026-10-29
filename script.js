@@ -1791,3 +1791,356 @@ if (document.readyState === "loading") {
         }
     });
 })();
+/* =====================================================
+   AUTOMATIC CIRCUIT FAULT ALERTS
+   Paste at the VERY BOTTOM of script.js
+   ===================================================== */
+
+(function initializeCircuitAlerts() {
+    "use strict";
+
+    const DEVICE_TIMEOUT_MS = 30000;
+    const GSM_TIMEOUT_MS = 60000;
+    const GSM_WEAK_THRESHOLD = 10;
+
+    const activeFaults = new Set();
+    const lastRelayFeedback = {};
+    const relayFeedbackTimers = {};
+    let deviceWatchdog = null;
+    let gsmWatchdog = null;
+
+    // Use the existing Alerts page.
+    function getAlertsContainer() {
+        return document.getElementById("fullAlerts");
+    }
+
+    function showAlert(id, title, message, severity = "warning") {
+        if (activeFaults.has(id)) return;
+
+        activeFaults.add(id);
+
+        // Also show it in the existing notification system.
+        if (typeof addNotification === "function") {
+            addNotification(title, message, severity);
+        }
+
+        const container = getAlertsContainer();
+        if (!container) {
+            console.warn("[Circuit Alert]", title, message);
+            return;
+        }
+
+        const empty = container.querySelector(".empty-page");
+        if (empty) empty.remove();
+
+        const colors = {
+            critical: "#dc2626",
+            warning: "#d97706",
+            info: "#2563eb"
+        };
+
+        const card = document.createElement("div");
+        card.className = "circuit-alert";
+        card.dataset.alertId = id;
+
+        card.style.cssText = `
+            padding: 16px;
+            margin-bottom: 12px;
+            border-left: 4px solid ${colors[severity] || colors.warning};
+            border-radius: 8px;
+            background: var(--card-bg, #fff);
+            box-shadow: 0 2px 6px rgba(0,0,0,.08);
+        `;
+
+        const heading = document.createElement("strong");
+        heading.textContent = "⚠ " + title;
+        heading.style.color = colors[severity] || colors.warning;
+
+        const description = document.createElement("p");
+        description.textContent = message;
+        description.style.margin = "8px 0";
+
+        const timestamp = document.createElement("small");
+        timestamp.textContent = new Date().toLocaleString();
+
+        card.append(heading, description, timestamp);
+        container.prepend(card);
+
+        console.warn("[Circuit Alert]", title, message);
+    }
+
+    function clearAlert(id, recoveryMessage) {
+        if (!activeFaults.has(id)) return;
+
+        activeFaults.delete(id);
+
+        const container = getAlertsContainer();
+        const card = container?.querySelector(
+            `[data-alert-id="${id}"]`
+        );
+
+        if (card) card.remove();
+
+        if (typeof addNotification === "function") {
+            addNotification(
+                "System Recovered",
+                recoveryMessage,
+                "good"
+            );
+        }
+
+        if (container && container.children.length === 0) {
+            container.innerHTML = `
+                <div class="empty-page small-empty">
+                    <i class="fa-regular fa-circle-check"></i>
+                    <h2>No Active Alerts</h2>
+                    <p>No active system faults detected.</p>
+                </div>
+            `;
+        }
+    }
+
+    /* ---------------------------------------------
+       1. MQTT CONNECTION
+       --------------------------------------------- */
+
+    function checkMQTTConnection() {
+        const connected = Boolean(
+            typeof client !== "undefined" &&
+            client &&
+            client.connected
+        );
+
+        if (!connected) {
+            showAlert(
+                "mqtt-disconnected",
+                "MQTT Connection Lost",
+                "The dashboard cannot communicate with the MQTT broker.",
+                "critical"
+            );
+        } else {
+            clearAlert(
+                "mqtt-disconnected",
+                "MQTT connection has been restored."
+            );
+        }
+    }
+
+    // Check the current connection every 5 seconds.
+    setInterval(checkMQTTConnection, 5000);
+
+
+    /* ---------------------------------------------
+       2. ESP32 HEARTBEAT / POSSIBLE POWER FAILURE
+
+       Requires the ESP32 to publish:
+       smartrelay/device/status = ONLINE
+       periodically, e.g. every 5 seconds.
+       --------------------------------------------- */
+
+    let lastHeartbeat = Date.now();
+    let heartbeatReceived = false;
+
+    function recordDeviceHeartbeat() {
+        lastHeartbeat = Date.now();
+        heartbeatReceived = true;
+
+        clearAlert(
+            "device-offline",
+            "ESP32 communication has been restored."
+        );
+    }
+
+    deviceWatchdog = setInterval(() => {
+        // Do not claim the device is offline before its
+        // first heartbeat has been received.
+        if (!heartbeatReceived) return;
+
+        if (Date.now() - lastHeartbeat > DEVICE_TIMEOUT_MS) {
+            showAlert(
+                "device-offline",
+                "Device Offline / Possible Power Failure",
+                "No ESP32 heartbeat received for 30 seconds. Check device power, Wi-Fi, and MQTT communication.",
+                "critical"
+            );
+        }
+    }, 5000);
+
+
+    /* ---------------------------------------------
+       3. GSM SIGNAL MONITORING
+
+       Call reportGsmSignal(value) with the actual
+       SIM800L AT+CSQ numeric value (0-31 or 99).
+       --------------------------------------------- */
+
+    let lastGsmReading = 0;
+    let gsmReadingReceived = false;
+
+    function reportGsmSignal(value) {
+        const signal = Number(value);
+
+        if (
+            !Number.isInteger(signal) ||
+            signal < 0 ||
+            signal > 31
+        ) {
+            if (signal === 99) {
+                showAlert(
+                    "gsm-unavailable",
+                    "GSM Signal Unavailable",
+                    "SIM800L reports that signal strength is unknown.",
+                    "warning"
+                );
+            }
+            return;
+        }
+
+        lastGsmReading = Date.now();
+        gsmReadingReceived = true;
+
+        clearAlert(
+            "gsm-unavailable",
+            "SIM800L signal readings have resumed."
+        );
+
+        if (signal < GSM_WEAK_THRESHOLD) {
+            showAlert(
+                "gsm-weak",
+                "Weak GSM Signal",
+                `SIM800L signal is weak (CSQ ${signal}/31). Check antenna placement and network coverage.`,
+                "warning"
+            );
+        } else {
+            clearAlert(
+                "gsm-weak",
+                "GSM signal strength has recovered."
+            );
+        }
+    }
+
+    gsmWatchdog = setInterval(() => {
+        if (
+            gsmReadingReceived &&
+            Date.now() - lastGsmReading > GSM_TIMEOUT_MS
+        ) {
+            showAlert(
+                "gsm-unavailable",
+                "GSM Updates Lost",
+                "No GSM signal reading received for 60 seconds.",
+                "warning"
+            );
+        }
+    }, 5000);
+
+
+    /* ---------------------------------------------
+       4. RELAY FEEDBACK WATCHDOG
+
+       Detects missing confirmation after a command.
+       --------------------------------------------- */
+
+    function monitorRelayCommand(number) {
+        clearTimeout(relayFeedbackTimers[number]);
+
+        relayFeedbackTimers[number] = setTimeout(() => {
+            showAlert(
+                `relay-feedback-${number}`,
+                `Relay ${number} Feedback Missing`,
+                "No relay confirmation received within 10 seconds. Check the relay circuit, feedback wiring, ESP32, and MQTT topics.",
+                "critical"
+            );
+        }, 10000);
+    }
+
+    function recordRelayFeedback(number) {
+        lastRelayFeedback[number] = Date.now();
+
+        clearTimeout(relayFeedbackTimers[number]);
+
+        clearAlert(
+            `relay-feedback-${number}`,
+            `Relay ${number} feedback has been received again.`
+        );
+    }
+
+
+    /* ---------------------------------------------
+       5. PUBLIC HOOKS FOR YOUR EXISTING CODE
+
+       The existing MQTT handlers can call these.
+       --------------------------------------------- */
+
+    window.circuitAlerts = {
+        recordDeviceHeartbeat,
+        reportGsmSignal,
+        monitorRelayCommand,
+        recordRelayFeedback,
+        showAlert,
+        clearAlert
+    };
+
+    console.log("Automatic circuit alert system initialized.");
+
+})();
+/* -------- REMOVE DEVICE / GSM PAGE -------- */
+
+(function removeDeviceGSMPage() {
+    function removeDevicePage() {
+        // Remove the sidebar navigation button.
+        document.querySelectorAll(".menu-item").forEach(item => {
+            const page = item.getAttribute("data-page");
+
+            if (page === "device-page") {
+                item.remove();
+            }
+        });
+
+        // Hide and remove the Device / GSM page.
+        const devicePage = document.getElementById("device-page");
+
+        if (devicePage) {
+            devicePage.remove();
+        }
+
+        // Remove its page title configuration.
+        if (typeof pageTitles !== "undefined") {
+            delete pageTitles["device-page"];
+        }
+
+        // If the removed page was open, return to Dashboard.
+        const title = document.getElementById("pageTitle");
+        const subtitle = document.getElementById("pageSubtitle");
+        const dashboard = document.getElementById("dashboard-page");
+
+        if (dashboard) {
+            dashboard.style.display = "block";
+        }
+
+        document.querySelectorAll(".app-page").forEach(page => {
+            if (page.id !== "dashboard-page") {
+                page.style.display = "none";
+            }
+        });
+
+        document.querySelectorAll(".menu-item").forEach(item => {
+            item.classList.toggle(
+                "active",
+                item.getAttribute("data-page") === "dashboard-page"
+            );
+        });
+
+        if (title) title.textContent = "Smart Relay Dashboard";
+        if (subtitle) {
+            subtitle.textContent = "Monitor your IoT relay system";
+        }
+    }
+
+    if (document.readyState === "loading") {
+        document.addEventListener("DOMContentLoaded", removeDevicePage, {
+            once: true
+        });
+    } else {
+        removeDevicePage();
+    }
+})();
